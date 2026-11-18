@@ -1,128 +1,70 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
+  Volume2,
   CheckCircle2,
   XCircle,
-  Volume2,
   RotateCcw,
-  Eye,
-  EyeOff,
   History,
-  BrainCircuit,
+  Flag,
   Sparkles,
   Trash2,
-  Award,
-  Flame,
 } from "lucide-react";
 import {
   Verb,
   UserProfile,
   VerbProgress,
   JlptLevel,
+  IndustryTrack,
   getDatabase,
 } from "../lib/db";
+import { updateVerbMastery } from "../lib/mastery";
 import { speakJapanese } from "../lib/audio";
 
 export interface QuizViewProps {
   verbs: Verb[];
   profile: UserProfile;
-  progressMap?: Map<number, VerbProgress> | Record<number, VerbProgress>;
-  onUpdateProgress?: (progress: VerbProgress) => void | Promise<void>;
-  onRecordProgress?: (progress: VerbProgress) => void | Promise<void>;
-  onProgressUpdate?: (progress: VerbProgress) => void | Promise<void>;
+  progressMap: Map<number, VerbProgress>;
+  onUpdateProgress: (progress: VerbProgress) => void | Promise<void>;
+  selectedLevels?: JlptLevel[];
+  selectedTracks?: IndustryTrack[];
 }
 
-type QuizMode = "kanji_to_meaning" | "kanji_to_reading" | "meaning_to_kanji" | "mixed";
-type SessionLength = 10 | 20 | 30 | 40 | 0; // 0 = Infinite
+type QuizMode = "reading" | "meaning" | "reverse" | "mixed";
+type SessionLength = 10 | 20 | 30 | 40 | "infinite";
 
-interface QuizOption {
-  id: string;
-  label: string;
-  verbId: number;
-  kanji: string;
-  furigana: string;
-  meaning: string;
-  jlptLevel: JlptLevel;
-  isCorrect: boolean;
+interface QuizQuestionItem {
+  verb: Verb;
+  mode: "reading" | "meaning" | "reverse";
+  options: Verb[];
+  correctIndex: number;
 }
 
-interface QuizQuestion {
-  id: string;
-  mode: Exclude<QuizMode, "mixed">;
-  targetVerb: Verb;
-  options: QuizOption[];
-}
-
-export interface QuizHistoryEntry {
+interface QuizHistoryEntry {
   id: string;
   verb_id: number;
   kanji_form: string;
   furigana_reading: string;
   correct_meaning: string;
-  jlpt_level: string;
-  quiz_mode: string;
-  is_correct: number; // 1 = right, 0 = wrong
-  selected_label: string;
-  selected_kanji: string;
-  selected_furigana: string;
-  selected_meaning: string;
-  correct_label: string;
+  chosen_label: string;
+  is_correct: number;
+  is_idk: number;
+  mode: string;
   answered_at: string;
 }
 
-const JLPT_LEVELS: JlptLevel[] = ["N5", "N4", "N3", "N2", "N1"];
+const IDK_EMOTE_PROMPTS = [
+  "🤷 Honestly, I don't know (No Gacha)",
+  "🫠 Blank mind — flag for review",
+  "🎲 Skip gambling — reveal answer",
+];
 
-function getProgressEntry(
-  progressMap: Map<number, VerbProgress> | Record<number, VerbProgress> | undefined,
-  verbId: number
-): VerbProgress | undefined {
-  if (!progressMap) return undefined;
-  if (progressMap instanceof Map) {
-    return progressMap.get(verbId);
+function shuffle<T>(arr: T[]): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
   }
-  return progressMap[verbId];
-}
-
-function formatHistoryTime(iso: string): string {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(new Date(iso));
-  } catch {
-    return iso;
-  }
-}
-
-function renderRubyText(verb: Verb, showFurigana: boolean) {
-  if (!showFurigana) {
-    return <span>{verb.kanji_form}</span>;
-  }
-  if (Array.isArray(verb.ruby_segments) && verb.ruby_segments.length > 0) {
-    return (
-      <ruby className="ruby-align">
-        {verb.ruby_segments.map((seg, idx) => (
-          <React.Fragment key={idx}>
-            <span>{seg.base}</span>
-            {seg.ruby ? (
-              <rt className="text-xs sm:text-sm text-accent font-medium tracking-normal">
-                {seg.ruby}
-              </rt>
-            ) : (
-              <rt />
-            )}
-          </React.Fragment>
-        ))}
-      </ruby>
-    );
-  }
-  return (
-    <ruby>
-      <span>{verb.kanji_form}</span>
-      <rt className="text-xs sm:text-sm text-accent font-medium">{verb.furigana_reading}</rt>
-    </ruby>
-  );
+  return copy;
 }
 
 export const QuizView: React.FC<QuizViewProps> = ({
@@ -130,29 +72,28 @@ export const QuizView: React.FC<QuizViewProps> = ({
   profile,
   progressMap,
   onUpdateProgress,
-  onRecordProgress,
-  onProgressUpdate,
+  selectedLevels,
+  selectedTracks,
 }) => {
-  const [subView, setSubView] = useState<"quiz" | "history">("quiz");
-  const [quizMode, setQuizMode] = useState<QuizMode>("kanji_to_meaning");
-  const [sessionLength, setSessionLength] = useState<SessionLength>(20);
-  const [selectedLevels, setSelectedLevels] = useState<JlptLevel[]>([]);
-  const [showFurigana, setShowFurigana] = useState<boolean>(true);
+  const [quizMode, setQuizMode] = useState<QuizMode>("mixed");
+  const [sessionLength, setSessionLength] = useState<SessionLength>(10);
+  const [deckSource, setDeckSource] = useState<"pool" | "flagged">("pool");
+  const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<"all" | "wrong" | "idk">("all");
+  const [historyRows, setHistoryRows] = useState<QuizHistoryEntry[]>([]);
 
-  // Active question & session metrics
-  const [currentQuestion, setCurrentQuestion] = useState<QuizQuestion | null>(null);
-  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
-  const [questionsAnswered, setQuestionsAnswered] = useState<number>(0);
-  const [correctCount, setCorrectCount] = useState<number>(0);
-  const [streak, setStreak] = useState<number>(0);
-  const [bestStreak, setBestStreak] = useState<number>(0);
-  const [usedVerbIds, setUsedVerbIds] = useState<Set<number>>(new Set());
+  const [questions, setQuestions] = useState<QuizQuestionItem[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const [answeredAsIdk, setAnsweredAsIdk] = useState(false);
 
-  // Persistent Quiz History state
-  const [history, setHistory] = useState<QuizHistoryEntry[]>([]);
-  const [historyFilter, setHistoryFilter] = useState<"all" | "wrong" | "correct">("all");
+  const [score, setScore] = useState(0);
+  const [answeredTotal, setAnsweredTotal] = useState(0);
+  const [streak, setStreak] = useState(0);
+  const [sessionIdkCount, setSessionIdkCount] = useState(0);
+  const [isSessionDone, setIsSessionDone] = useState(false);
 
-  // Ensure SQLite quiz_history table exists and load history
+  // Load persisted quiz history & flagged IDK rows from SQLite
   const loadQuizHistory = useCallback(async () => {
     try {
       const db = await getDatabase();
@@ -163,21 +104,26 @@ export const QuizView: React.FC<QuizViewProps> = ({
           kanji_form TEXT NOT NULL,
           furigana_reading TEXT NOT NULL,
           correct_meaning TEXT NOT NULL,
-          jlpt_level TEXT NOT NULL,
-          quiz_mode TEXT NOT NULL,
-          is_correct INTEGER NOT NULL,
-          selected_label TEXT NOT NULL,
-          selected_kanji TEXT NOT NULL,
-          selected_furigana TEXT NOT NULL,
-          selected_meaning TEXT NOT NULL,
-          correct_label TEXT NOT NULL,
+          chosen_label TEXT NOT NULL,
+          is_correct INTEGER NOT NULL DEFAULT 0,
+          is_idk INTEGER NOT NULL DEFAULT 0,
+          mode TEXT NOT NULL DEFAULT 'mixed',
           answered_at TEXT NOT NULL
         );
       `);
+      // Backwards-compatible column migration if table existed without is_idk
+      try {
+        await db.execute(
+          `ALTER TABLE quiz_history ADD COLUMN is_idk INTEGER NOT NULL DEFAULT 0;`
+        );
+      } catch {
+        // Column already exists
+      }
+
       const rows = await db.select<QuizHistoryEntry[]>(
         `SELECT * FROM quiz_history ORDER BY answered_at DESC LIMIT 250;`
       );
-      setHistory(rows || []);
+      setHistoryRows(rows || []);
     } catch (err) {
       console.warn("[QuizView] Failed to load quiz history:", err);
     }
@@ -187,951 +133,746 @@ export const QuizView: React.FC<QuizViewProps> = ({
     loadQuizHistory();
   }, [loadQuizHistory]);
 
-  const toggleLevel = (lvl: JlptLevel) => {
-    setSelectedLevels((prev) =>
-      prev.includes(lvl) ? prev.filter((x) => x !== lvl) : [...prev, lvl]
-    );
-  };
-
-  // Filter candidate verbs by selected JLPT levels (or active profile band if none selected)
-  const candidatePool = useMemo(() => {
-    if (!verbs || verbs.length === 0) return [];
-    if (selectedLevels.length > 0) {
-      const filtered = verbs.filter((v) => selectedLevels.includes(v.jlpt_level));
-      if (filtered.length >= 4) return filtered;
+  const flaggedVerbIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const row of historyRows) {
+      if (row.is_idk === 1) {
+        ids.add(row.verb_id);
+      }
     }
-    return verbs;
-  }, [verbs, selectedLevels]);
+    return ids;
+  }, [historyRows]);
 
-  // Build a fresh 4-option multiple-choice question
+  // Active filtered verb pool (supports multi-select tracks + Core JLPT default)
+  const activePool = useMemo(() => {
+    const levels =
+      selectedLevels && selectedLevels.length > 0
+        ? selectedLevels
+        : ([profile.target_jlpt] as JlptLevel[]);
+    const tracks = selectedTracks || [];
+
+    const filtered = verbs.filter((v) => {
+      if (!levels.includes(v.jlpt_level)) return false;
+      if (tracks.length === 0) {
+        return v.is_core_jlpt === 1;
+      }
+      const hasTrack =
+        Array.isArray(v.industry_tags) &&
+        v.industry_tags.some((t) => tracks.includes(t));
+      return v.is_core_jlpt === 1 || hasTrack;
+    });
+
+    const base = filtered.length >= 4 ? filtered : verbs;
+
+    if (deckSource === "flagged" && flaggedVerbIds.size > 0) {
+      const flaggedOnly = base.filter((v) => flaggedVerbIds.has(v.id));
+      if (flaggedOnly.length > 0) return flaggedOnly;
+    }
+
+    return base;
+  }, [verbs, profile.target_jlpt, selectedLevels, selectedTracks, deckSource, flaggedVerbIds]);
+
   const buildQuestion = useCallback(
-    (pool: Verb[], excludeIds: Set<number>): QuizQuestion | null => {
-      if (pool.length < 4) return null;
-
-      const remaining = pool.filter((v) => !excludeIds.has(v.id));
-      const sourcePool = remaining.length > 0 ? remaining : pool;
-
-      // Prioritize weaker FSRS items slightly while keeping variety
-      const weighted = [...sourcePool].sort((a, b) => {
-        const pa = getProgressEntry(progressMap, a.id);
-        const pb = getProgressEntry(progressMap, b.id);
-        const sa = pa ? (pa.reading_score + pa.meaning_score) / 2 : 0;
-        const sb = pb ? (pb.reading_score + pb.meaning_score) / 2 : 0;
-        return sa - sb + (Math.random() - 0.5) * 0.85;
-      });
-
-      const targetVerb = weighted[0];
-      const effectiveMode: Exclude<QuizMode, "mixed"> =
+    (targetVerb: Verb, allDistractorPool: Verb[]): QuizQuestionItem => {
+      const effectiveMode: "reading" | "meaning" | "reverse" =
         quizMode === "mixed"
-          ? (["kanji_to_meaning", "kanji_to_reading", "meaning_to_kanji"] as const)[
+          ? (["reading", "meaning", "reverse"] as const)[
               Math.floor(Math.random() * 3)
             ]
           : quizMode;
 
-      const targetMeaning = targetVerb.meanings.slice(0, 3).join(", ");
+      const sameLevelDistractors = allDistractorPool.filter(
+        (v) => v.id !== targetVerb.id && v.jlpt_level === targetVerb.jlpt_level
+      );
+      const fallbackDistractors = allDistractorPool.filter(
+        (v) => v.id !== targetVerb.id
+      );
+      const sourcePool =
+        sameLevelDistractors.length >= 3 ? sameLevelDistractors : fallbackDistractors;
 
-      // Pick 3 distinct distractors with different meanings & readings
-      const distractors: Verb[] = [];
-      const shuffled = [...pool].sort(() => Math.random() - 0.5);
-      for (const candidate of shuffled) {
-        if (candidate.id === targetVerb.id) continue;
-        const candMeaning = candidate.meanings.slice(0, 3).join(", ");
-        if (
-          effectiveMode === "kanji_to_meaning" &&
-          candMeaning.toLowerCase() === targetMeaning.toLowerCase()
-        ) {
-          continue;
-        }
-        if (
-          effectiveMode === "kanji_to_reading" &&
-          candidate.furigana_reading === targetVerb.furigana_reading
-        ) {
-          continue;
-        }
-        if (
-          effectiveMode === "meaning_to_kanji" &&
-          candidate.kanji_form === targetVerb.kanji_form
-        ) {
-          continue;
-        }
-        if (distractors.some((d) => d.id === candidate.id)) continue;
-        distractors.push(candidate);
-        if (distractors.length === 3) break;
-      }
-
-      if (distractors.length < 3) return null;
-
-      const toOption = (v: Verb, isCorrect: boolean): QuizOption => {
-        const meaningText = v.meanings.slice(0, 3).join(", ");
-        let label = meaningText;
-        if (effectiveMode === "kanji_to_reading") {
-          label = v.furigana_reading;
-        } else if (effectiveMode === "meaning_to_kanji") {
-          label = v.kanji_form;
-        }
-        return {
-          id: `${v.id}_${isCorrect ? "correct" : "dist"}_${Math.random().toString(36).slice(2, 6)}`,
-          label,
-          verbId: v.id,
-          kanji: v.kanji_form,
-          furigana: v.furigana_reading,
-          meaning: meaningText,
-          jlptLevel: v.jlpt_level,
-          isCorrect,
-        };
-      };
-
-      const options = [
-        toOption(targetVerb, true),
-        ...distractors.map((d) => toOption(d, false)),
-      ].sort(() => Math.random() - 0.5);
+      const distractors = shuffle(sourcePool).slice(0, 3);
+      const options = shuffle([targetVerb, ...distractors]);
+      const correctIndex = options.findIndex((o) => o.id === targetVerb.id);
 
       return {
-        id: `q_${Date.now()}_${targetVerb.id}`,
+        verb: targetVerb,
         mode: effectiveMode,
-        targetVerb,
         options,
+        correctIndex,
       };
     },
-    [quizMode, progressMap]
+    [quizMode]
   );
 
-  // Start / reset session whenever mode, length, or JLPT filters change
-  const restartSession = useCallback(() => {
-    const emptySet = new Set<number>();
-    setQuestionsAnswered(0);
-    setCorrectCount(0);
+  const startNewSession = useCallback(() => {
+    if (activePool.length === 0) return;
+    const count =
+      sessionLength === "infinite"
+        ? Math.min(40, activePool.length)
+        : Math.min(sessionLength, activePool.length);
+
+    const chosenVerbs = shuffle(activePool).slice(0, count);
+    const built = chosenVerbs.map((v) => buildQuestion(v, verbs));
+
+    setQuestions(built);
+    setCurrentIndex(0);
+    setSelectedIdx(null);
+    setAnsweredAsIdk(false);
+    setScore(0);
+    setAnsweredTotal(0);
     setStreak(0);
-    setSelectedOptionId(null);
-    const first = buildQuestion(candidatePool, emptySet);
-    if (first) {
-      emptySet.add(first.targetVerb.id);
-    }
-    setUsedVerbIds(emptySet);
-    setCurrentQuestion(first);
-  }, [buildQuestion, candidatePool]);
+    setSessionIdkCount(0);
+    setIsSessionDone(false);
+  }, [activePool, verbs, sessionLength, buildQuestion]);
 
   useEffect(() => {
-    restartSession();
-  }, [restartSession]);
+    startNewSession();
+  }, [startNewSession]);
 
-  // Handle user answer selection
-  const handleSelectOption = async (option: QuizOption) => {
-    if (!currentQuestion || selectedOptionId !== null) return;
-
-    setSelectedOptionId(option.id);
-    const isRight = option.isCorrect;
-    const nextAnswered = questionsAnswered + 1;
-    const nextCorrect = isRight ? correctCount + 1 : correctCount;
-    const nextStreak = isRight ? streak + 1 : 0;
-
-    setQuestionsAnswered(nextAnswered);
-    setCorrectCount(nextCorrect);
-    setStreak(nextStreak);
-    if (nextStreak > bestStreak) {
-      setBestStreak(nextStreak);
-    }
-
-    const target = currentQuestion.targetVerb;
-    const correctOption =
-      currentQuestion.options.find((o) => o.isCorrect) || option;
-    const nowIso = new Date().toISOString();
-
-    // 1. Save to persistent SQLite quiz_history
-    const historyRow: QuizHistoryEntry = {
-      id: `qh_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      verb_id: target.id,
-      kanji_form: target.kanji_form,
-      furigana_reading: target.furigana_reading,
-      correct_meaning: target.meanings.slice(0, 3).join(", "),
-      jlpt_level: target.jlpt_level,
-      quiz_mode: currentQuestion.mode,
-      is_correct: isRight ? 1 : 0,
-      selected_label: option.label,
-      selected_kanji: option.kanji,
-      selected_furigana: option.furigana,
-      selected_meaning: option.meaning,
-      correct_label: correctOption.label,
-      answered_at: nowIso,
-    };
-
-    setHistory((prev) => [historyRow, ...prev]);
-
+  const recordHistoryRow = async (
+    q: QuizQuestionItem,
+    chosenLabel: string,
+    isCorrect: boolean,
+    isIdk: boolean
+  ) => {
     try {
       const db = await getDatabase();
+      const id = `qh_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const now = new Date().toISOString();
       await db.execute(
         `INSERT INTO quiz_history (
-          id, verb_id, kanji_form, furigana_reading, correct_meaning, jlpt_level,
-          quiz_mode, is_correct, selected_label, selected_kanji, selected_furigana,
-          selected_meaning, correct_label, answered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          id, verb_id, kanji_form, furigana_reading, correct_meaning,
+          chosen_label, is_correct, is_idk, mode, answered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
         [
-          historyRow.id,
-          historyRow.verb_id,
-          historyRow.kanji_form,
-          historyRow.furigana_reading,
-          historyRow.correct_meaning,
-          historyRow.jlpt_level,
-          historyRow.quiz_mode,
-          historyRow.is_correct,
-          historyRow.selected_label,
-          historyRow.selected_kanji,
-          historyRow.selected_furigana,
-          historyRow.selected_meaning,
-          historyRow.correct_label,
-          historyRow.answered_at,
+          id,
+          q.verb.id,
+          q.verb.kanji_form,
+          q.verb.furigana_reading,
+          q.verb.meanings.slice(0, 3).join(", "),
+          chosenLabel,
+          isCorrect ? 1 : 0,
+          isIdk ? 1 : 0,
+          q.mode,
+          now,
         ]
       );
 
-      // 2. Update Dual-Axis FSRS progress in SQLite
-      const existing = getProgressEntry(progressMap, target.id);
-      const prevReading = existing?.reading_score ?? 0;
-      const prevMeaning = existing?.meaning_score ?? 0;
-      const prevStability = existing?.stability_days ?? 1.0;
-      const prevReps = existing?.repetitions ?? 0;
-      const prevLapses = existing?.lapses ?? 0;
+      // If user answered correctly later, clear prior IDK flags on that verb
+      if (isCorrect) {
+        await db.execute(
+          `UPDATE quiz_history SET is_idk = 0 WHERE verb_id = ?;`,
+          [q.verb.id]
+        );
+      }
 
-      const isReadingTest = currentQuestion.mode === "kanji_to_reading";
-      const nextReading = isReadingTest
-        ? isRight
-          ? Math.min(1, prevReading + 0.22)
-          : Math.max(0, prevReading - 0.15)
-        : isRight
-          ? Math.min(1, prevReading + 0.08)
-          : prevReading;
-
-      const nextMeaning = !isReadingTest
-        ? isRight
-          ? Math.min(1, prevMeaning + 0.22)
-          : Math.max(0, prevMeaning - 0.15)
-        : isRight
-          ? Math.min(1, prevMeaning + 0.08)
-          : prevMeaning;
-
-      const nextStability = isRight
-        ? Math.min(180, prevStability * 1.65 + 0.5)
-        : Math.max(0.5, prevStability * 0.5);
-      const nextReviewDate = new Date(
-        Date.now() + nextStability * 24 * 60 * 60 * 1000
-      ).toISOString();
-
-      const updatedProgress: VerbProgress = {
-        verb_id: target.id,
-        reading_score: Number(nextReading.toFixed(3)),
-        meaning_score: Number(nextMeaning.toFixed(3)),
-        stability_days: Number(nextStability.toFixed(2)),
-        repetitions: isRight ? prevReps + 1 : prevReps,
-        lapses: isRight ? prevLapses : prevLapses + 1,
-        last_reviewed_at: nowIso,
-        next_review_at: nextReviewDate,
-        sync_dirty: 1,
-        updated_at: nowIso,
-      };
-
-      await db.execute(
-        `INSERT INTO user_verb_progress (
-          verb_id, reading_score, meaning_score, stability_days,
-          repetitions, lapses, last_reviewed_at, next_review_at, sync_dirty, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-        ON CONFLICT(verb_id) DO UPDATE SET
-          reading_score = excluded.reading_score,
-          meaning_score = excluded.meaning_score,
-          stability_days = excluded.stability_days,
-          repetitions = excluded.repetitions,
-          lapses = excluded.lapses,
-          last_reviewed_at = excluded.last_reviewed_at,
-          next_review_at = excluded.next_review_at,
-          sync_dirty = 1,
-          updated_at = excluded.updated_at;`,
-        [
-          updatedProgress.verb_id,
-          updatedProgress.reading_score,
-          updatedProgress.meaning_score,
-          updatedProgress.stability_days,
-          updatedProgress.repetitions,
-          updatedProgress.lapses,
-          updatedProgress.last_reviewed_at,
-          updatedProgress.next_review_at,
-          updatedProgress.updated_at,
-        ]
-      );
-
-      onUpdateProgress?.(updatedProgress);
-      onRecordProgress?.(updatedProgress);
-      onProgressUpdate?.(updatedProgress);
+      await loadQuizHistory();
     } catch (err) {
-      console.warn("[QuizView] Error saving progress/history:", err);
+      console.warn("[QuizView] Failed to save quiz history:", err);
     }
   };
 
-  // Advance to next question
-  const handleNextQuestion = useCallback(() => {
-    if (sessionLength > 0 && questionsAnswered >= sessionLength) {
+  const currentQ = questions[currentIndex % Math.max(1, questions.length)];
+  const isAnswered = selectedIdx !== null || answeredAsIdk;
+  const idkButtonText = IDK_EMOTE_PROMPTS[currentIndex % IDK_EMOTE_PROMPTS.length];
+
+  const handleChooseOption = async (idx: number) => {
+    if (isAnswered || !currentQ) return;
+    setSelectedIdx(idx);
+    setAnsweredTotal((t) => t + 1);
+
+    const chosenVerb = currentQ.options[idx];
+    const isCorrect = idx === currentQ.correctIndex;
+
+    const chosenLabel =
+      currentQ.mode === "reading"
+        ? chosenVerb.furigana_reading
+        : currentQ.mode === "meaning"
+        ? chosenVerb.meanings[0] || ""
+        : `${chosenVerb.kanji_form} (${chosenVerb.furigana_reading})`;
+
+    if (isCorrect) {
+      setScore((s) => s + 1);
+      setStreak((st) => st + 1);
+    } else {
+      setStreak(0);
+      if (sessionLength === "infinite") {
+        setQuestions((prev) => {
+          const copy = [...prev];
+          const reinsert = buildQuestion(currentQ.verb, verbs);
+          copy.splice(Math.min(copy.length, currentIndex + 4), 0, reinsert);
+          return copy;
+        });
+      }
+    }
+
+    // Update FSRS Dual-Axis Mastery
+    const existing = progressMap.get(currentQ.verb.id);
+    const axis = currentQ.mode === "reading" ? "reading" : "meaning";
+    const updated = updateVerbMastery(
+      existing,
+      currentQ.verb.id,
+      axis,
+      isCorrect ? 3 : 1
+    );
+    await onUpdateProgress(updated);
+    await recordHistoryRow(currentQ, chosenLabel, isCorrect, false);
+  };
+
+  const handleHonestlyDontKnow = async () => {
+    if (isAnswered || !currentQ) return;
+    setAnsweredAsIdk(true);
+    setAnsweredTotal((t) => t + 1);
+    setSessionIdkCount((k) => k + 1);
+    setStreak(0);
+
+    if (sessionLength === "infinite") {
+      setQuestions((prev) => {
+        const copy = [...prev];
+        const reinsert = buildQuestion(currentQ.verb, verbs);
+        copy.splice(Math.min(copy.length, currentIndex + 3), 0, reinsert);
+        return copy;
+      });
+    }
+
+    // Record gentle FSRS lapse without counting a random lucky hit
+    const existing = progressMap.get(currentQ.verb.id);
+    const axis = currentQ.mode === "reading" ? "reading" : "meaning";
+    const updated = updateVerbMastery(existing, currentQ.verb.id, axis, 1);
+    await onUpdateProgress(updated);
+    await recordHistoryRow(
+      currentQ,
+      "🤷 Honestly, I don't know",
+      false,
+      true
+    );
+  };
+
+  const handleNext = () => {
+    if (sessionLength !== "infinite" && answeredTotal >= sessionLength) {
+      setIsSessionDone(true);
       return;
     }
-    const nextUsed = new Set(usedVerbIds);
-    const nextQ = buildQuestion(candidatePool, nextUsed);
-    if (nextQ) {
-      nextUsed.add(nextQ.targetVerb.id);
-    }
-    setUsedVerbIds(nextUsed);
-    setSelectedOptionId(null);
-    setCurrentQuestion(nextQ);
-  }, [sessionLength, questionsAnswered, usedVerbIds, buildQuestion, candidatePool]);
+    setSelectedIdx(null);
+    setAnsweredAsIdk(false);
+    setCurrentIndex((prev) => {
+      if (prev + 1 >= questions.length) {
+        const rebuilt = shuffle(activePool)
+          .slice(0, 20)
+          .map((v) => buildQuestion(v, verbs));
+        setQuestions(rebuilt);
+        return 0;
+      }
+      return prev + 1;
+    });
+  };
 
-  // Keyboard shortcuts: 1-4 to pick answer, Enter/Space for Next
+  // Keyboard shortcuts: 1-4 for options, ? or 0 for IDK, Enter/Space for Next
   useEffect(() => {
-    if (subView !== "quiz") return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
-      if (!currentQuestion) return;
-
-      if (selectedOptionId === null && ["1", "2", "3", "4"].includes(e.key)) {
-        const idx = Number(e.key) - 1;
-        const opt = currentQuestion.options[idx];
-        if (opt) {
-          e.preventDefault();
-          handleSelectOption(opt);
-        }
-      } else if (
-        selectedOptionId !== null &&
-        (e.key === "Enter" || e.key === " " || e.key === "ArrowRight")
-      ) {
+      if (!isAnswered) {
+        if (e.key === "1") handleChooseOption(0);
+        if (e.key === "2") handleChooseOption(1);
+        if (e.key === "3") handleChooseOption(2);
+        if (e.key === "4") handleChooseOption(3);
+        if (e.key === "?" || e.key === "0") handleHonestlyDontKnow();
+      } else if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        handleNextQuestion();
+        handleNext();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  const handleClearHistory = async () => {
+  const clearHistory = async () => {
     try {
       const db = await getDatabase();
       await db.execute(`DELETE FROM quiz_history;`);
-      setHistory([]);
-    } catch (err) {
-      console.warn("[QuizView] Failed to clear history:", err);
+      setHistoryRows([]);
+    } catch {
+      // ignore
     }
   };
 
-  const wrongHistoryCount = useMemo(
-    () => history.filter((h) => h.is_correct === 0).length,
-    [history]
-  );
-
   const filteredHistory = useMemo(() => {
-    if (historyFilter === "wrong") return history.filter((h) => h.is_correct === 0);
-    if (historyFilter === "correct") return history.filter((h) => h.is_correct === 1);
-    return history;
-  }, [history, historyFilter]);
-
-  const selectedOption = useMemo(
-    () =>
-      currentQuestion?.options.find((o) => o.id === selectedOptionId) || null,
-    [currentQuestion, selectedOptionId]
-  );
-
-  const correctOption = useMemo(
-    () => currentQuestion?.options.find((o) => o.isCorrect) || null,
-    [currentQuestion]
-  );
-
-  const isSessionComplete =
-    sessionLength > 0 &&
-    questionsAnswered >= sessionLength &&
-    selectedOptionId !== null;
+    if (historyFilter === "idk") {
+      return historyRows.filter((r) => r.is_idk === 1);
+    }
+    if (historyFilter === "wrong") {
+      return historyRows.filter((r) => r.is_correct === 0);
+    }
+    return historyRows;
+  }, [historyRows, historyFilter]);
 
   const accuracyPct =
-    questionsAnswered === 0
-      ? 0
-      : Math.round((correctCount / questionsAnswered) * 100);
+    answeredTotal === 0 ? 0 : Math.round((score / answeredTotal) * 100);
 
   return (
     <div className="max-w-4xl mx-auto space-y-4 pb-24 md:pb-10">
-      {/* Top Mode & Sub-View Header Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-3xl glass-card border border-border-glass">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setSubView("quiz")}
-            className={`flex items-center gap-2 min-h-[42px] px-4 py-2 rounded-2xl text-xs font-semibold transition-all ${
-              subView === "quiz"
-                ? "bg-accent text-white shadow-neon-glow"
-                : "glass-panel text-primary-muted hover:text-primary"
-            }`}
-          >
-            <BrainCircuit className="w-4 h-4" />
-            <span>Kanji Quiz</span>
-          </button>
+      {/* Top Quiz Mode, Session Length & Flagged IDK Controls */}
+      <div className="p-4 rounded-3xl glass-card border border-border-glass space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* Quiz Mode Selector */}
+          <div className="flex items-center gap-1 p-1 rounded-xl glass-panel overflow-x-auto">
+            {(
+              [
+                { id: "mixed", label: "Mixed" },
+                { id: "reading", label: "Kanji → Furigana" },
+                { id: "meaning", label: "Kanji → Meaning" },
+                { id: "reverse", label: "Meaning → Kanji" },
+              ] as Array<{ id: QuizMode; label: string }>
+            ).map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setQuizMode(m.id)}
+                className={`min-h-[36px] px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
+                  quizMode === m.id
+                    ? "bg-accent text-white shadow-neon-glow"
+                    : "text-primary-muted hover:text-primary"
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Session Length Selector */}
+          <div className="flex items-center gap-1 p-1 rounded-xl glass-panel">
+            {([10, 20, 30, 40, "infinite"] as SessionLength[]).map((len) => (
+              <button
+                key={String(len)}
+                type="button"
+                onClick={() => setSessionLength(len)}
+                className={`min-h-[34px] px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  sessionLength === len
+                    ? "bg-accent text-white"
+                    : "text-primary-muted hover:text-primary"
+                }`}
+              >
+                {len === "infinite" ? "∞" : len}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Deck Source & Choice History Toggle */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDeckSource("pool")}
+              className={`min-h-[36px] px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                deckSource === "pool"
+                  ? "bg-accent/15 border-accent text-accent"
+                  : "glass-panel border-border-glass text-primary-muted hover:text-primary"
+              }`}
+            >
+              Active Deck ({activePool.length})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDeckSource("flagged")}
+              disabled={flaggedVerbIds.size === 0}
+              className={`min-h-[36px] px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                deckSource === "flagged"
+                  ? "bg-amber-500/20 border-amber-400 text-amber-300"
+                  : "glass-panel border-border-glass text-primary-muted hover:text-primary disabled:opacity-40"
+              }`}
+            >
+              🤷 Practice Flagged IDK ({flaggedVerbIds.size})
+            </button>
+          </div>
 
           <button
             type="button"
-            onClick={() => setSubView("history")}
-            className={`flex items-center gap-2 min-h-[42px] px-4 py-2 rounded-2xl text-xs font-semibold transition-all ${
-              subView === "history"
-                ? "bg-accent text-white shadow-neon-glow"
-                : "glass-panel text-primary-muted hover:text-primary"
-            }`}
+            onClick={() => setShowHistoryDrawer((prev) => !prev)}
+            className="flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 rounded-xl glass-panel border border-border-glass text-xs font-semibold text-primary hover:border-accent"
           >
-            <History className="w-4 h-4" />
-            <span>Choice History ({history.length})</span>
-            {wrongHistoryCount > 0 && (
-              <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-rose-500/20 text-rose-400 font-bold tabular-nums">
-                {wrongHistoryCount} wrong
-              </span>
-            )}
+            <History className="w-3.5 h-3.5 text-accent" />
+            <span>Choice History ({historyRows.length})</span>
           </button>
         </div>
 
-        {/* Furigana Visibility Toggle */}
-        <button
-          type="button"
-          onClick={() => setShowFurigana((prev) => !prev)}
-          aria-pressed={showFurigana}
-          className={`flex items-center gap-2 min-h-[42px] px-3.5 py-2 rounded-2xl border text-xs font-semibold transition-all ${
-            showFurigana
-              ? "border-accent bg-accent/15 text-accent"
-              : "border-border-glass glass-panel text-primary-muted hover:text-primary"
-          }`}
-        >
-          {showFurigana ? (
-            <Eye className="w-4 h-4" />
-          ) : (
-            <EyeOff className="w-4 h-4" />
-          )}
-          <span>Furigana: {showFurigana ? "ON" : "OFF"}</span>
-        </button>
-      </div>
-
-      {subView === "quiz" ? (
-        <>
-          {/* Configuration & Live Score HUD */}
-          <div className="p-4 rounded-3xl glass-card border border-border-glass space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              {/* JLPT N5-N1 Multi-Select Pills */}
-              <div className="flex items-center gap-1.5 p-1 rounded-full glass-panel overflow-x-auto">
-                <span className="text-[11px] font-semibold text-primary-muted px-2">
-                  JLPT:
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedLevels([])}
-                  className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
-                    selectedLevels.length === 0
-                      ? "bg-accent text-white shadow-neon-glow"
-                      : "text-primary-muted hover:text-primary"
-                  }`}
-                >
-                  All ({profile.current_jlpt}–{profile.target_jlpt})
-                </button>
-                {JLPT_LEVELS.map((lvl) => {
-                  const active = selectedLevels.includes(lvl);
-                  return (
-                    <button
-                      key={lvl}
-                      type="button"
-                      onClick={() => toggleLevel(lvl)}
-                      className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
-                        active
-                          ? "bg-accent text-white shadow-neon-glow"
-                          : "text-primary-muted hover:text-primary"
-                      }`}
-                    >
-                      {lvl}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Quiz Mode Selector */}
-              <div className="flex items-center gap-1.5 p-1 rounded-full glass-panel overflow-x-auto">
-                {(
-                  [
-                    { id: "kanji_to_meaning", label: "Kanji → Meaning" },
-                    { id: "kanji_to_reading", label: "Kanji → Reading" },
-                    { id: "meaning_to_kanji", label: "Meaning → Kanji" },
-                    { id: "mixed", label: "Mixed" },
-                  ] as const
-                ).map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => setQuizMode(m.id)}
-                    className={`px-3 py-1 rounded-full text-xs font-semibold transition-all whitespace-nowrap ${
-                      quizMode === m.id
-                        ? "bg-accent text-white shadow-neon-glow"
-                        : "text-primary-muted hover:text-primary"
-                    }`}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Session Length + Live Score Strip */}
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-border-glass text-xs">
-              <div className="flex items-center gap-1.5">
-                <span className="text-primary-muted font-medium">Questions:</span>
-                {([10, 20, 30, 40, 0] as SessionLength[]).map((len) => (
-                  <button
-                    key={len}
-                    type="button"
-                    onClick={() => setSessionLength(len)}
-                    className={`px-2.5 py-1 rounded-lg font-semibold tabular-nums transition-colors ${
-                      sessionLength === len
-                        ? "bg-accent/20 text-accent border border-accent/40"
-                        : "glass-panel text-primary-muted hover:text-primary"
-                    }`}
-                  >
-                    {len === 0 ? "∞" : len}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-4 tabular-nums">
-                <span className="font-semibold text-primary">
-                  Score:{" "}
-                  <span className="text-emerald-400">
-                    {correctCount}/{questionsAnswered}
-                  </span>{" "}
-                  ({accuracyPct}%)
-                </span>
-                <span className="flex items-center gap-1 font-semibold text-amber-400">
-                  <Flame className="w-3.5 h-3.5" />
-                  Streak: {streak}
-                </span>
-                <button
-                  type="button"
-                  onClick={restartSession}
-                  title="Restart quiz session"
-                  className="p-1.5 rounded-lg glass-panel text-primary-muted hover:text-primary transition-colors"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                </button>
-              </div>
+        {/* Real-Time Telemetry HUD */}
+        <div className="grid grid-cols-4 gap-2 text-center">
+          <div className="p-2 rounded-2xl glass-panel">
+            <div className="text-[10px] uppercase text-primary-muted">Score</div>
+            <div className="text-sm font-bold text-primary tabular-nums">
+              {score}/{answeredTotal} ({accuracyPct}%)
             </div>
           </div>
+          <div className="p-2 rounded-2xl glass-panel">
+            <div className="text-[10px] uppercase text-primary-muted">Streak</div>
+            <div className="text-sm font-bold text-emerald-400 tabular-nums">
+              {streak} 🔥
+            </div>
+          </div>
+          <div className="p-2 rounded-2xl glass-panel">
+            <div className="text-[10px] uppercase text-primary-muted">
+              Flagged IDK
+            </div>
+            <div className="text-sm font-bold text-amber-400 tabular-nums">
+              {sessionIdkCount} 🤷
+            </div>
+          </div>
+          <div className="p-2 rounded-2xl glass-panel">
+            <div className="text-[10px] uppercase text-primary-muted">Question</div>
+            <div className="text-sm font-bold text-accent tabular-nums">
+              {answeredTotal} / {sessionLength === "infinite" ? "∞" : sessionLength}
+            </div>
+          </div>
+        </div>
+      </div>
 
-          {/* Active Question Card */}
-          {currentQuestion ? (
-            <div className="p-6 sm:p-8 rounded-3xl glass-card border border-border-glass space-y-6">
-              {/* Card Metadata & Pronunciation */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="px-2.5 py-1 rounded-lg bg-accent/15 text-accent text-xs font-bold">
-                    {currentQuestion.targetVerb.jlpt_level}
-                  </span>
-                  <span className="px-2.5 py-1 rounded-lg glass-panel text-primary-muted text-xs font-medium">
-                    {currentQuestion.targetVerb.verb_group}
-                  </span>
-                  {sessionLength > 0 && (
-                    <span className="text-xs text-primary-muted tabular-nums">
-                      Question {Math.min(questionsAnswered + (selectedOptionId ? 0 : 1), sessionLength)} /{" "}
-                      {sessionLength}
-                    </span>
-                  )}
-                </div>
-
+      {/* Collapsible Choice & Flagged IDK History Panel */}
+      {showHistoryDrawer && (
+        <div className="p-4 rounded-3xl glass-card border border-border-glass space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              {(
+                [
+                  { id: "all", label: `All (${historyRows.length})` },
+                  {
+                    id: "idk",
+                    label: `🤷 Flagged IDK (${
+                      historyRows.filter((r) => r.is_idk === 1).length
+                    })`,
+                  },
+                  {
+                    id: "wrong",
+                    label: `Missed (${
+                      historyRows.filter((r) => r.is_correct === 0).length
+                    })`,
+                  },
+                ] as const
+              ).map((tab) => (
                 <button
+                  key={tab.id}
                   type="button"
-                  onClick={() =>
-                    speakJapanese(
-                      currentQuestion.targetVerb.furigana_reading ||
-                        currentQuestion.targetVerb.kanji_form
-                    )
-                  }
-                  aria-label="Listen to pronunciation"
-                  className="flex items-center gap-1.5 min-h-[40px] px-3 py-1.5 rounded-xl glass-panel border border-border-glass text-xs font-semibold text-primary hover:text-accent transition-colors"
-                >
-                  <Volume2 className="w-4 h-4 text-accent" />
-                  <span>Listen</span>
-                </button>
-              </div>
-
-              {/* Prompt Display */}
-              <div className="text-center py-4 space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wider text-primary-muted">
-                  {currentQuestion.mode === "kanji_to_meaning" &&
-                    "Select the correct English meaning"}
-                  {currentQuestion.mode === "kanji_to_reading" &&
-                    "Select the correct Hiragana reading"}
-                  {currentQuestion.mode === "meaning_to_kanji" &&
-                    "Select the matching Japanese Kanji"}
-                </p>
-
-                {currentQuestion.mode === "meaning_to_kanji" ? (
-                  <div className="space-y-1.5">
-                    <h2 className="text-2xl sm:text-3xl font-bold text-primary">
-                      {currentQuestion.targetVerb.meanings.slice(0, 3).join(", ")}
-                    </h2>
-                    {showFurigana && (
-                      <p className="font-jp text-sm text-accent font-medium">
-                        Hint: {currentQuestion.targetVerb.furigana_reading}
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="font-jp text-4xl sm:text-5xl font-bold text-primary tracking-wide pt-2">
-                    {renderRubyText(
-                      currentQuestion.targetVerb,
-                      currentQuestion.mode === "kanji_to_reading"
-                        ? showFurigana && selectedOptionId !== null
-                        : showFurigana
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* 4 Multiple Choice Options */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {currentQuestion.options.map((opt, idx) => {
-                  const isPicked = selectedOptionId === opt.id;
-                  const isAnswered = selectedOptionId !== null;
-
-                  let styleClass =
-                    "glass-panel border-border-glass hover:border-accent/60 text-primary";
-                  if (isAnswered) {
-                    if (opt.isCorrect) {
-                      styleClass =
-                        "border-emerald-500 bg-emerald-500/15 text-primary shadow-sm";
-                    } else if (isPicked && !opt.isCorrect) {
-                      styleClass =
-                        "border-rose-500 bg-rose-500/15 text-primary";
-                    } else {
-                      styleClass =
-                        "glass-panel border-border-glass opacity-55 text-primary-muted";
-                    }
-                  }
-
-                  return (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      disabled={isAnswered}
-                      onClick={() => handleSelectOption(opt)}
-                      className={`min-h-[60px] p-4 rounded-2xl border text-left transition-all flex items-center justify-between gap-3 ${styleClass}`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="w-7 h-7 rounded-lg bg-surface-card border border-border-glass flex items-center justify-center text-xs font-mono font-bold text-primary-muted shrink-0">
-                          {idx + 1}
-                        </span>
-                        <div className="min-w-0">
-                          {currentQuestion.mode === "meaning_to_kanji" &&
-                            showFurigana && (
-                              <div className="font-jp text-[11px] text-accent font-medium">
-                                {opt.furigana}
-                              </div>
-                            )}
-                          <div
-                            className={`font-semibold text-sm sm:text-base truncate ${
-                              currentQuestion.mode !== "kanji_to_meaning"
-                                ? "font-jp"
-                                : ""
-                            }`}
-                          >
-                            {opt.label}
-                          </div>
-                        </div>
-                      </div>
-
-                      {isAnswered && opt.isCorrect && (
-                        <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                      )}
-                      {isAnswered && isPicked && !opt.isCorrect && (
-                        <XCircle className="w-5 h-5 text-rose-400 shrink-0" />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Instant Detailed Feedback Card (Wrong Option Meaning + Right Choice) */}
-              {selectedOption && correctOption && (
-                <div
-                  className={`p-4 rounded-2xl border space-y-2.5 ${
-                    selectedOption.isCorrect
-                      ? "border-emerald-500/40 bg-emerald-500/10"
-                      : "border-rose-500/40 bg-rose-500/10"
+                  onClick={() => setHistoryFilter(tab.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold ${
+                    historyFilter === tab.id
+                      ? "bg-accent text-white"
+                      : "glass-panel text-primary-muted hover:text-primary"
                   }`}
                 >
-                  {selectedOption.isCorrect ? (
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>Correct!</span>
-                        </div>
-                        <p className="text-xs sm:text-sm text-primary">
-                          <span className="font-jp font-bold">
-                            {currentQuestion.targetVerb.kanji_form}
-                          </span>{" "}
-                          <span className="font-jp text-accent">
-                            （{currentQuestion.targetVerb.furigana_reading}）
-                          </span>{" "}
-                          means{" "}
-                          <strong>
-                            "{currentQuestion.targetVerb.meanings.slice(0, 3).join(", ")}"
-                          </strong>
-                          .
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-rose-400 font-bold text-sm">
-                        <XCircle className="w-4 h-4" />
-                        <span>Incorrect — Here is the breakdown:</span>
-                      </div>
-
-                      {/* What was wrong & the meaning of the wrong option */}
-                      <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-xs sm:text-sm space-y-1">
-                        <p className="text-rose-300 font-semibold">
-                          Your choice: "{selectedOption.label}"
-                        </p>
-                        <p className="text-primary">
-                          That option belongs to{" "}
-                          <span className="font-jp font-bold text-rose-300">
-                            {selectedOption.kanji}（{selectedOption.furigana}）
-                          </span>
-                          , which means:{" "}
-                          <strong className="text-rose-200">
-                            "{selectedOption.meaning}"
-                          </strong>
-                          .
-                        </p>
-                      </div>
-
-                      {/* The right choice */}
-                      <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-xs sm:text-sm space-y-1">
-                        <p className="text-emerald-400 font-semibold">
-                          Right choice: "{correctOption.label}"
-                        </p>
-                        <p className="text-primary">
-                          <span className="font-jp font-bold text-emerald-300">
-                            {currentQuestion.targetVerb.kanji_form}（
-                            {currentQuestion.targetVerb.furigana_reading}）
-                          </span>{" "}
-                          means:{" "}
-                          <strong className="text-emerald-200">
-                            "{currentQuestion.targetVerb.meanings.slice(0, 3).join(", ")}"
-                          </strong>
-                          .
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Next Question or Session Complete Banner */}
-                  {isSessionComplete ? (
-                    <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-border-glass">
-                      <div className="flex items-center gap-2 text-sm font-bold text-primary">
-                        <Award className="w-5 h-5 text-amber-400" />
-                        <span>
-                          Session Complete! Final Score: {correctCount}/{questionsAnswered} (
-                          {accuracyPct}%) • Best Streak: {bestStreak}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={restartSession}
-                        className="min-h-[42px] px-5 py-2 rounded-xl bg-accent text-white font-semibold text-xs hover:opacity-95 shadow-neon-glow"
-                      >
-                        Start New Session
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="pt-1 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={handleNextQuestion}
-                        className="min-h-[42px] px-5 py-2 rounded-xl bg-accent text-white font-semibold text-xs hover:opacity-95 shadow-neon-glow"
-                      >
-                        Next Question →
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="p-8 rounded-3xl glass-card border border-border-glass text-center text-sm text-primary-muted">
-              Not enough verbs match the current filter. Select additional JLPT levels above.
-            </div>
-          )}
-        </>
-      ) : (
-        /* QUIZ CHOICE HISTORY SECTION */
-        <div className="p-5 rounded-3xl glass-card border border-border-glass space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-base font-bold text-primary flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-accent" />
-                <span>Quiz Choice & Mistake Review History</span>
-              </h3>
-              <p className="text-xs text-primary-muted">
-                Review past right & wrong choices, see what each wrong option meant, and reinforce the right answer
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <div className="flex p-1 rounded-xl glass-panel text-xs">
-                {(
-                  [
-                    { id: "all", label: `All (${history.length})` },
-                    { id: "wrong", label: `Wrong (${wrongHistoryCount})` },
-                    {
-                      id: "correct",
-                      label: `Right (${history.length - wrongHistoryCount})`,
-                    },
-                  ] as const
-                ).map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setHistoryFilter(tab.id)}
-                    className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
-                      historyFilter === tab.id
-                        ? "bg-accent text-white"
-                        : "text-primary-muted hover:text-primary"
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-
-              {history.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleClearHistory}
-                  title="Clear quiz history"
-                  className="p-2 rounded-xl glass-panel text-primary-muted hover:text-rose-400 transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
+                  {tab.label}
                 </button>
-              )}
+              ))}
             </div>
+
+            {historyRows.length > 0 && (
+              <button
+                type="button"
+                onClick={clearHistory}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs text-rose-400 hover:bg-rose-500/10"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Clear</span>
+              </button>
+            )}
           </div>
 
           {filteredHistory.length === 0 ? (
-            <div className="py-12 text-center text-xs text-primary-muted">
-              No quiz history entries in this filter yet. Answer a few questions in the Kanji Quiz tab!
-            </div>
+            <p className="text-xs text-primary-muted text-center py-4">
+              No entries in this filter yet.
+            </p>
           ) : (
-            <div className="space-y-3 max-h-[65vh] overflow-y-auto pr-1">
-              {filteredHistory.map((item) => {
-                const isRight = item.is_correct === 1;
-                return (
-                  <div
-                    key={item.id}
-                    className={`p-4 rounded-2xl border space-y-2.5 ${
-                      isRight
-                        ? "glass-panel border-emerald-500/30"
-                        : "glass-panel border-rose-500/35"
-                    }`}
-                  >
-                    {/* Header row */}
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-2">
-                        {isRight ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-xs font-bold">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            Right
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-400 text-xs font-bold">
-                            <XCircle className="w-3.5 h-3.5" />
-                            Wrong
-                          </span>
-                        )}
-
-                        <span className="font-jp text-lg font-bold text-primary">
-                          {item.kanji_form}
+            <div className="max-h-60 overflow-y-auto space-y-2">
+              {filteredHistory.slice(0, 40).map((item) => (
+                <div
+                  key={item.id}
+                  className="p-3 rounded-2xl glass-panel border border-border-glass flex items-center justify-between gap-2 text-xs"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-jp font-bold text-sm text-primary">
+                        {item.kanji_form}
+                      </span>
+                      <span className="font-jp text-accent">
+                        （{item.furigana_reading}）
+                      </span>
+                      {item.is_idk === 1 ? (
+                        <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold text-[10px]">
+                          🤷 Flagged IDK
                         </span>
-                        {showFurigana && (
-                          <span className="font-jp text-xs text-accent font-medium">
-                            （{item.furigana_reading}）
-                          </span>
-                        )}
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/15 text-accent font-bold">
-                          {item.jlpt_level}
+                      ) : item.is_correct === 1 ? (
+                        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[10px]">
+                          Correct
                         </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-primary-muted">
-                          {formatHistoryTime(item.answered_at)}
+                      ) : (
+                        <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold text-[10px]">
+                          Wrong
                         </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            speakJapanese(item.furigana_reading || item.kanji_form)
-                          }
-                          aria-label="Pronounce word"
-                          className="p-1.5 rounded-lg text-primary-muted hover:text-accent hover:bg-surface-hover"
-                        >
-                          <Volume2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                      )}
                     </div>
-
-                    {/* Choice Details */}
-                    {isRight ? (
-                      <p className="text-xs text-primary">
-                        You selected{" "}
-                        <strong className="text-emerald-400">
-                          "{item.selected_label}"
-                        </strong>{" "}
-                        — Meaning: <strong>"{item.correct_meaning}"</strong>
-                      </p>
-                    ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                        <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/25 space-y-0.5">
-                          <div className="font-bold text-rose-400">
-                            Your Wrong Choice: "{item.selected_label}"
-                          </div>
-                          <div className="text-primary">
-                            Meaning of{" "}
-                            <span className="font-jp font-bold">
-                              {item.selected_kanji}（{item.selected_furigana}）
-                            </span>
-                            :{" "}
-                            <strong className="text-rose-200">
-                              "{item.selected_meaning}"
-                            </strong>
-                          </div>
-                        </div>
-
-                        <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 space-y-0.5">
-                          <div className="font-bold text-emerald-400">
-                            Right Choice: "{item.correct_label}"
-                          </div>
-                          <div className="text-primary">
-                            Meaning of{" "}
-                            <span className="font-jp font-bold">
-                              {item.kanji_form}（{item.furigana_reading}）
-                            </span>
-                            :{" "}
-                            <strong className="text-emerald-200">
-                              "{item.correct_meaning}"
-                            </strong>
-                          </div>
-                        </div>
-                      </div>
-                    )}
+                    <p className="text-primary-muted truncate">
+                      Meaning: {item.correct_meaning} • Your pick:{" "}
+                      <span className="text-primary">{item.chosen_label}</span>
+                    </p>
                   </div>
-                );
-              })}
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      speakJapanese(item.furigana_reading || item.kanji_form)
+                    }
+                    className="p-2 rounded-lg text-primary-muted hover:text-accent shrink-0"
+                  >
+                    <Volume2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </div>
+      )}
+
+      {/* Session Completed View */}
+      {isSessionDone ? (
+        <div className="p-8 rounded-3xl glass-card border border-border-glass text-center space-y-4">
+          <Sparkles className="w-10 h-10 text-accent mx-auto" />
+          <h3 className="text-xl font-bold text-primary">
+            Kanji Quiz Session Complete!
+          </h3>
+          <p className="text-sm text-primary-muted">
+            Score:{" "}
+            <strong className="text-primary">
+              {score} / {answeredTotal} ({accuracyPct}%)
+            </strong>{" "}
+            • Flagged IDK:{" "}
+            <strong className="text-amber-400">{sessionIdkCount} 🤷</strong>
+          </p>
+          <div className="flex flex-wrap justify-center gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setDeckSource("pool");
+                startNewSession();
+              }}
+              className="min-h-[44px] px-5 py-2.5 rounded-2xl bg-accent text-white text-xs font-semibold flex items-center gap-2"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>New Session</span>
+            </button>
+            {flaggedVerbIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setDeckSource("flagged")}
+                className="min-h-[44px] px-5 py-2.5 rounded-2xl bg-amber-500/20 border border-amber-400/50 text-amber-300 text-xs font-semibold"
+              >
+                🤷 Drill {flaggedVerbIds.size} Flagged IDK Verbs
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        currentQ && (
+          <div className="p-6 rounded-3xl glass-card border border-border-glass space-y-5">
+            {/* Prompt Card */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-lg bg-accent/15 text-accent text-xs font-bold">
+                  {currentQ.verb.jlpt_level}
+                </span>
+                <span className="px-2.5 py-0.5 rounded-lg glass-panel text-primary-muted text-xs font-semibold">
+                  {currentQ.verb.verb_group}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  speakJapanese(
+                    currentQ.verb.furigana_reading || currentQ.verb.kanji_form
+                  )
+                }
+                className="flex items-center gap-1.5 min-h-[38px] px-3 py-1.5 rounded-xl glass-panel border border-border-glass text-xs font-semibold text-primary hover:border-accent"
+              >
+                <Volume2 className="w-3.5 h-3.5 text-accent" />
+                <span>Audio</span>
+              </button>
+            </div>
+
+            <div className="text-center py-4 space-y-2">
+              <div className="text-xs uppercase tracking-wider text-primary-muted font-semibold">
+                {currentQ.mode === "reading"
+                  ? "Select the correct Furigana reading"
+                  : currentQ.mode === "meaning"
+                  ? "Select the correct English meaning"
+                  : "Select the matching Kanji verb"}
+              </div>
+
+              {currentQ.mode === "reverse" ? (
+                <div className="space-y-1">
+                  <div className="text-2xl sm:text-3xl font-bold text-primary">
+                    {currentQ.verb.meanings.slice(0, 3).join(", ")}
+                  </div>
+                  {isAnswered && (
+                    <div className="font-jp text-sm text-accent">
+                      {currentQ.verb.furigana_reading}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {isAnswered && (
+                    <div className="font-jp text-sm text-accent font-semibold">
+                      {currentQ.verb.furigana_reading}
+                    </div>
+                  )}
+                  <div className="font-jp text-4xl sm:text-5xl font-bold text-primary">
+                    {currentQ.verb.kanji_form}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 4 Multiple-Choice Options */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {currentQ.options.map((opt, idx) => {
+                const isCorrect = idx === currentQ.correctIndex;
+                const isSelected = idx === selectedIdx;
+
+                let btnClass =
+                  "glass-panel border-border-glass hover:border-accent/60 text-primary";
+                if (isAnswered) {
+                  if (isCorrect) {
+                    btnClass =
+                      "bg-emerald-500/15 border-emerald-400 text-emerald-200";
+                  } else if (isSelected) {
+                    btnClass = "bg-rose-500/15 border-rose-400 text-rose-200";
+                  } else {
+                    btnClass =
+                      "glass-panel border-border-glass opacity-55 text-primary-muted";
+                  }
+                }
+
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    disabled={isAnswered}
+                    onClick={() => handleChooseOption(idx)}
+                    className={`min-h-[58px] p-4 rounded-2xl border text-left flex items-center justify-between gap-2 transition-all ${btnClass}`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="w-6 h-6 rounded-lg bg-surface-hover text-xs font-bold flex items-center justify-center shrink-0">
+                        {idx + 1}
+                      </span>
+                      <div className="min-w-0">
+                        {currentQ.mode === "reading" && (
+                          <div className="font-jp text-lg font-bold">
+                            {opt.furigana_reading}
+                          </div>
+                        )}
+                        {currentQ.mode === "meaning" && (
+                          <div className="text-sm font-semibold line-clamp-2">
+                            {opt.meanings.slice(0, 3).join(", ")}
+                          </div>
+                        )}
+                        {currentQ.mode === "reverse" && (
+                          <div>
+                            <div className="font-jp text-xl font-bold">
+                              {opt.kanji_form}
+                            </div>
+                            {isAnswered && (
+                              <div className="font-jp text-xs text-accent">
+                                {opt.furigana_reading}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {isAnswered && isCorrect && (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                    )}
+                    {isAnswered && isSelected && !isCorrect && (
+                      <XCircle className="w-5 h-5 text-rose-400 shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 5th Option: "Honestly, I Don't Know" Anti-Gacha Flag */}
+            {!isAnswered && (
+              <button
+                type="button"
+                onClick={handleHonestlyDontKnow}
+                className="w-full min-h-[46px] px-4 py-2.5 rounded-2xl border border-amber-400/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 transition-all"
+              >
+                <Flag className="w-4 h-4" />
+                <span>{idkButtonText}</span>
+              </button>
+            )}
+
+            {/* Diagnostic Feedback Banner */}
+            {isAnswered && (
+              <div
+                className={`p-4 rounded-2xl border space-y-2 ${
+                  answeredAsIdk
+                    ? "bg-amber-500/10 border-amber-400/40"
+                    : selectedIdx === currentQ.correctIndex
+                    ? "bg-emerald-500/10 border-emerald-400/40"
+                    : "bg-rose-500/10 border-rose-400/40"
+                }`}
+              >
+                {answeredAsIdk ? (
+                  <p className="text-xs sm:text-sm font-semibold text-amber-300">
+                    🤷 Flagged as "Honestly, I don't know" — added to your{" "}
+                    <strong>Practice Flagged IDK</strong> deck so you can master
+                    it instead of gambling!
+                  </p>
+                ) : selectedIdx === currentQ.correctIndex ? (
+                  <p className="text-xs sm:text-sm font-semibold text-emerald-300">
+                    Correct! FSRS mastery updated.
+                  </p>
+                ) : (
+                  selectedIdx !== null && (
+                    <p className="text-xs sm:text-sm text-rose-300">
+                      You picked{" "}
+                      <strong className="font-jp">
+                        {currentQ.options[selectedIdx].kanji_form}（
+                        {currentQ.options[selectedIdx].furigana_reading}）
+                      </strong>{" "}
+                      ={" "}
+                      <strong>
+                        "{currentQ.options[selectedIdx].meanings.slice(0, 2).join(", ")}"
+                      </strong>
+                      .
+                    </p>
+                  )
+                )}
+
+                <p className="text-xs text-primary">
+                  <strong>Answer:</strong>{" "}
+                  <span className="font-jp font-bold text-accent">
+                    {currentQ.verb.kanji_form}（{currentQ.verb.furigana_reading}）
+                  </span>{" "}
+                  — {currentQ.verb.meanings.join("; ")}
+                </p>
+
+                <div className="pt-1 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleNext}
+                    className="min-h-[42px] px-5 py-2 rounded-xl bg-accent text-white text-xs font-semibold"
+                  >
+                    Next Question →
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )
       )}
     </div>
   );

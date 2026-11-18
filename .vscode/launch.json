@@ -5,7 +5,7 @@
       "name": "Tauri Backend (macOS LLDB)",
       "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/src-tauri/target/debug/jCrispyJLPT-Companion",
+      "program": "${workspaceFolder}/src-tauri/target/debug/CrispyJLPT-Companion",
       "args": [],
       "cwd": "${workspaceFolder}/src-tauri",
       "preLaunchTask": "build:tauri-dev-backend"
