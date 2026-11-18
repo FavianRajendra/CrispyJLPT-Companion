@@ -1,0 +1,138 @@
+/* =====================================================================
+   THREE-LAYER CSS TOKEN ARCHITECTURE
+   Layer 1: Primitive Tokens (Raw Palette)
+   Layer 2: Semantic Tokens (Canvas, Glass Surface, Borders, State)
+   Layer 3: Component Tokens (Radii, Touch Target Dimensions, Animation)
+   ===================================================================== */
+
+:root {
+  /* ===================================================================
+     1. PRIMITIVE TOKENS
+     =================================================================== */
+  --raw-zinc-950: #09090b;
+  --raw-zinc-900: #18181b;
+  --raw-zinc-850: #202024;
+  --raw-zinc-800: #27272a;
+  --raw-zinc-700: #3f3f46;
+  --raw-zinc-600: #52525b;
+  --raw-zinc-500: #71717a;
+  --raw-zinc-400: #a1a1aa;
+  --raw-zinc-300: #d4d4d8;
+  --raw-zinc-200: #e4e4e7;
+  --raw-zinc-100: #f4f4f5;
+  --raw-zinc-50:  #fafafa;
+  --raw-white:    #ffffff;
+
+  /* Accent Primitives */
+  --raw-indigo-500: #6366f1;
+  --raw-indigo-400: #818cf8;
+  --raw-indigo-600: #4f46e5;
+
+  /* State / FSRS Primitives */
+  --raw-emerald-500: #10b981;
+  --raw-emerald-400: #34d399;
+  --raw-amber-500:   #f59e0b;
+  --raw-amber-400:   #fbbf24;
+  --raw-rose-500:    #f43f5e;
+  --raw-rose-400:    #fb7185;
+
+  /* JLPT Level Primitives */
+  --raw-cyan-500:    #06b6d4;
+  --raw-blue-500:    #3b82f6;
+  --raw-violet-500:  #8b5cf6;
+  --raw-purple-500:  #a855f7;
+  --raw-fuchsia-500: #d946ef;
+
+  /* Industry Track Primitives */
+  --raw-sky-500:     #0ea5e9; /* IT */
+  --raw-emerald-600: #059669; /* Finance */
+  --raw-orange-500:  #f97316; /* FnB */
+  --raw-teal-500:    #14b8a6; /* Healthcare */
+  --raw-slate-500:   #64748b; /* Manufacturing */
+  --raw-zinc-400-alt:#a1a1aa; /* General */
+
+  /* ===================================================================
+     3. COMPONENT TOKENS (Universal Metrics)
+     =================================================================== */
+  --card-radius: 1.5rem;
+  --pill-radius: 9999px;
+  --touch-target-min: 44px;
+  --touch-target-spacing: 8px;
+  --kanji-fixed-slot-h: 170px;
+  --furigana-fixed-slot-h: 28px;
+  --meaning-fixed-slot-h: 60px;
+}
+
+/* =====================================================================
+   2. SEMANTIC TOKENS: DARK THEME (DEFAULT)
+   ===================================================================== */
+html.dark, :root {
+  --bg-canvas: var(--raw-zinc-950);
+  --surface-glass: rgba(24, 24, 27, 0.65);
+  --surface-card: rgba(32, 32, 36, 0.75);
+  --surface-hover: rgba(63, 63, 70, 0.35);
+  --border-glass: rgba(255, 255, 255, 0.10);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+
+  --text-primary: var(--raw-zinc-100);
+  --text-muted: var(--raw-zinc-400);
+  --text-subtle: var(--raw-zinc-500);
+
+  --color-accent: var(--raw-indigo-500);
+  --color-accent-hover: var(--raw-indigo-400);
+  --color-accent-glow: rgba(99, 102, 241, 0.35);
+
+  --status-easy: var(--raw-emerald-500);
+  --status-hard: var(--raw-amber-500);
+  --status-again: var(--raw-rose-500);
+
+  --jlpt-n5: var(--raw-cyan-500);
+  --jlpt-n4: var(--raw-blue-500);
+  --jlpt-n3: var(--raw-violet-500);
+  --jlpt-n2: var(--raw-purple-500);
+  --jlpt-n1: var(--raw-fuchsia-500);
+
+  --ind-it: var(--raw-sky-500);
+  --ind-finance: var(--raw-emerald-500);
+  --ind-fnb: var(--raw-orange-500);
+  --ind-healthcare: var(--raw-teal-500);
+  --ind-manufacturing: var(--raw-slate-400);
+  --ind-general: var(--raw-zinc-400);
+}
+
+/* =====================================================================
+   2. SEMANTIC TOKENS: LIGHT THEME
+   ===================================================================== */
+html.light {
+  --bg-canvas: var(--raw-zinc-50);
+  --surface-glass: rgba(255, 255, 255, 0.85);
+  --surface-card: rgba(255, 255, 255, 0.95);
+  --surface-hover: rgba(244, 244, 245, 0.85);
+  --border-glass: rgba(0, 0, 0, 0.10);
+  --border-subtle: rgba(0, 0, 0, 0.05);
+
+  --text-primary: var(--raw-zinc-900);
+  --text-muted: var(--raw-zinc-600);
+  --text-subtle: var(--raw-zinc-400);
+
+  --color-accent: var(--raw-indigo-600);
+  --color-accent-hover: var(--raw-indigo-500);
+  --color-accent-glow: rgba(79, 70, 229, 0.25);
+
+  --status-easy: var(--raw-emerald-600);
+  --status-hard: var(--raw-amber-500);
+  --status-again: var(--raw-rose-500);
+
+  --jlpt-n5: #0891b2;
+  --jlpt-n4: #2563eb;
+  --jlpt-n3: #7c3aed;
+  --jlpt-n2: #9333ea;
+  --jlpt-n1: #c026d3;
+
+  --ind-it: #0284c7;
+  --ind-finance: #059669;
+  --ind-fnb: #ea580c;
+  --ind-healthcare: #0d9488;
+  --ind-manufacturing: #475569;
+  --ind-general: #52525b;
+}

@@ -1,0 +1,21 @@
+[package]
+name = "jlpt-verb-studio"
+version = "1.0.0"
+description = "JLPT Verb Kanji Studio - Cross-Platform Offline-First Learning App"
+authors = ["JLPT Studio Team"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "jlpt_verb_studio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Tauri Backend (macOS LLDB)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/src-tauri/target/debug/jlpt-verb-studio",
+      "args": [],
+      "cwd": "${workspaceFolder}/src-tauri",
+      "preLaunchTask": "build:tauri-dev-backend"
+    },
+    {
+      "name": "Tauri Frontend (Chrome/Edge Debugger)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:1420",
+      "webRoot": "${workspaceFolder}/src",
+      "sourceMaps": true,
+      "preLaunchTask": "dev:web-server"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full-Stack Debug (Tauri + Vite)",
+      "configurations": ["Tauri Backend (macOS LLDB)", "Tauri Frontend (Chrome/Edge Debugger)"]
+    }
+  ]
+}
