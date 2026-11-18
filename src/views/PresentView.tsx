@@ -13,6 +13,9 @@ import {
   CheckCircle2,
   AlertCircle,
   HelpCircle,
+  Clock,
+  Gauge,
+  Sparkles,
 } from "lucide-react";
 import {
   VerbWithProgress,
@@ -32,10 +35,24 @@ interface PresentViewProps {
 
 type AutoModeOrder = "priority" | "random" | "sequential";
 
-export const PresentView: React.FC<PresentViewProps> = ({ verbs, profile: _profile, onVerbUpdated }) => {
+const ALL_INDUSTRY_TRACKS: { id: IndustryTrack; label: string; short: string }[] = [
+  { id: "it", label: "IT & Tech", short: "IT" },
+  { id: "finance", label: "Finance", short: "Finance" },
+  { id: "fnb", label: "Food & Beverage", short: "F&B" },
+  { id: "healthcare", label: "Healthcare", short: "Health" },
+  { id: "manufacturing", label: "Manufacturing", short: "Mfg" },
+  { id: "general", label: "General", short: "General" },
+];
+
+const CARD_GAP_OPTIONS = [2, 3, 5, 8, 12];
+const SPEED_OPTIONS = [0.5, 1.0, 1.5, 2.0];
+
+export const PresentView: React.FC<PresentViewProps> = ({ verbs, profile, onVerbUpdated }) => {
   // Navigation & Filter State
   const [selectedJlpt, setSelectedJlpt] = useState<string>("All");
-  const [selectedIndustry, setSelectedIndustry] = useState<string>("All");
+  const [selectedTracks, setSelectedTracks] = useState<IndustryTrack[]>(() =>
+    Array.isArray(profile.target_industries) ? profile.target_industries : []
+  );
   const [currentIndex, setCurrentIndex] = useState(0);
 
   // Card Reveal States
@@ -44,28 +61,37 @@ export const PresentView: React.FC<PresentViewProps> = ({ verbs, profile: _profi
 
   // Auto-Presentation State
   const [isAutoPlaying, setIsAutoPlaying] = useState(false);
-  const [autoSpeed, setAutoSpeed] = useState<number>(1.0); // 0.5x, 1.0x, 1.5x, 2.0x
+  const [cardGapDuration, setCardGapDuration] = useState<number>(5); // 2s, 3s, 5s, 8s, 12s
+  const [autoSpeed, setAutoSpeed] = useState<number>(1.0); // 0.5x, 1.0x, 1.5x, 2.0x (Controls TTS + reveal cadence)
   const [autoOrder, setAutoOrder] = useState<AutoModeOrder>("priority");
   const [autoStep, setAutoStep] = useState<number>(1); // 1: Kanji, 2: Furigana+TTS, 3: Meaning, 4: Transition
   const [countdownProgress, setCountdownProgress] = useState(0); // 0 to 100 for SVG ring
+  const [remainingSeconds, setRemainingSeconds] = useState(cardGapDuration);
   const [loopEnabled] = useState(true);
   const [showControlsDrawer, setShowControlsDrawer] = useState(false);
 
-  // Filter verbs based on JLPT & Industry filters
+  // Filter verbs based on JLPT & Multi-Select Industry filters
   const filteredVerbs = React.useMemo(() => {
     let list = [...verbs];
     if (selectedJlpt !== "All") {
       list = list.filter((v) => v.jlpt_level === selectedJlpt);
     }
-    if (selectedIndustry !== "All") {
-      list = list.filter((v) => v.industry_tags.includes(selectedIndustry as IndustryTrack));
+
+    // Zero-Selection Default Rule: Regular JLPT Requirements (is_core_jlpt === 1)
+    if (selectedTracks.length === 0) {
+      list = list.filter((v) => v.is_core_jlpt === 1);
+    } else {
+      // Multi-Track Union Rule: Core JLPT verbs OR tagged with ANY selected track
+      list = list.filter(
+        (v) => v.is_core_jlpt === 1 || v.industry_tags.some((t) => selectedTracks.includes(t))
+      );
     }
 
     if (autoOrder === "priority") {
       list.sort((a, b) => b.priorityScore - a.priorityScore);
     }
     return list;
-  }, [verbs, selectedJlpt, selectedIndustry, autoOrder]);
+  }, [verbs, selectedJlpt, selectedTracks, autoOrder]);
 
   const currentVerb = filteredVerbs[currentIndex] || filteredVerbs[0] || null;
 
@@ -75,7 +101,8 @@ export const PresentView: React.FC<PresentViewProps> = ({ verbs, profile: _profi
     setIsRevealed(false);
     setAutoStep(1);
     setCountdownProgress(0);
-  }, [selectedJlpt, selectedIndustry]);
+    setRemainingSeconds(cardGapDuration);
+  }, [selectedJlpt, selectedTracks, cardGapDuration]);
 
   // Handle Advance
   const handleNext = useCallback(() => {
@@ -87,7 +114,9 @@ export const PresentView: React.FC<PresentViewProps> = ({ verbs, profile: _profi
     }
     setIsRevealed(false);
     setAutoStep(1);
-  }, [currentIndex, filteredVerbs.length, loopEnabled]);
+    setCountdownProgress(0);
+    setRemainingSeconds(cardGapDuration);
+  }, [currentIndex, filteredVerbs.length, loopEnabled, cardGapDuration]);
 
   const handlePrev = useCallback(() => {
     if (filteredVerbs.length === 0) return;
@@ -98,14 +127,16 @@ export const PresentView: React.FC<PresentViewProps> = ({ verbs, profile: _profi
     }
     setIsRevealed(false);
     setAutoStep(1);
-  }, [currentIndex, filteredVerbs.length, loopEnabled]);
+    setCountdownProgress(0);
+    setRemainingSeconds(cardGapDuration);
+  }, [currentIndex, filteredVerbs.length, loopEnabled, cardGapDuration]);
 
-  // Audio Playback
+  // Audio Playback with TTS rate control
   const handleSpeak = useCallback(() => {
     if (currentVerb) {
-      speakJapanese(currentVerb.furigana_reading || currentVerb.kanji_form);
+      speakJapanese(currentVerb.furigana_reading || currentVerb.kanji_form, autoSpeed);
     }
-  }, [currentVerb]);
+  }, [currentVerb, autoSpeed]);
 
   // FSRS Triage Action
   const handleTriage = async (rating: FsrsRating) => {
@@ -116,59 +147,67 @@ export const PresentView: React.FC<PresentViewProps> = ({ verbs, profile: _profi
     handleNext();
   };
 
-  // Auto-Presentation Timer Loop
+  // Toggle Industry Track
+  const toggleTrack = (trackId: IndustryTrack) => {
+    setSelectedTracks((prev) =>
+      prev.includes(trackId) ? prev.filter((t) => t !== trackId) : [...prev, trackId]
+    );
+  };
+
+  // Auto-Presentation Timer Loop (Independent Card Gap Duration vs. TTS Speed)
   const autoTimerRef = useRef<any>(null);
-  const stepTimerRef = useRef<any>(null);
 
   useEffect(() => {
     if (!isAutoPlaying || !currentVerb) {
       if (autoTimerRef.current) clearInterval(autoTimerRef.current);
-      if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
       setCountdownProgress(0);
+      setRemainingSeconds(cardGapDuration);
       return;
     }
 
-    // Step duration scaled by autoSpeed
-    const stepDuration = 2200 / autoSpeed;
+    const totalMs = cardGapDuration * 1000;
     const intervalTick = 50;
-    let elapsed = 0;
+    let elapsedMs = 0;
+    let spoken = false;
+    let meaningRevealed = false;
 
-    const runStep = (step: number) => {
-      setAutoStep(step);
-      if (step === 1) {
-        setIsRevealed(false);
-      } else if (step === 2) {
-        setIsRevealed(false);
+    // Choreography thresholds
+    // Kanji alone: 0% -> 30%
+    // Furigana + TTS: 30% -> 60%
+    // Meaning revealed: 60% -> 100%
+    setIsRevealed(false);
+    setAutoStep(1);
+
+    autoTimerRef.current = setInterval(() => {
+      elapsedMs += intervalTick;
+      const progressPct = Math.min(100, (elapsedMs / totalMs) * 100);
+      setCountdownProgress(progressPct);
+
+      const remSec = Math.max(0, Math.ceil((totalMs - elapsedMs) / 1000));
+      setRemainingSeconds(remSec);
+
+      if (progressPct >= 30 && !spoken) {
+        spoken = true;
+        setAutoStep(2);
         handleSpeak();
-      } else if (step === 3) {
-        setIsRevealed(true);
-      } else if (step === 4) {
-        handleNext();
-        return;
       }
 
-      elapsed = 0;
-      if (autoTimerRef.current) clearInterval(autoTimerRef.current);
+      if (progressPct >= 60 && !meaningRevealed) {
+        meaningRevealed = true;
+        setAutoStep(3);
+        setIsRevealed(true);
+      }
 
-      autoTimerRef.current = setInterval(() => {
-        elapsed += intervalTick;
-        const pct = Math.min(100, (elapsed / stepDuration) * 100);
-        setCountdownProgress(pct);
-
-        if (elapsed >= stepDuration) {
-          clearInterval(autoTimerRef.current);
-          runStep(step + 1);
-        }
-      }, intervalTick);
-    };
-
-    runStep(1);
+      if (elapsedMs >= totalMs) {
+        clearInterval(autoTimerRef.current);
+        handleNext();
+      }
+    }, intervalTick);
 
     return () => {
       if (autoTimerRef.current) clearInterval(autoTimerRef.current);
-      if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
     };
-  }, [isAutoPlaying, currentIndex, autoSpeed, handleNext, handleSpeak]);
+  }, [isAutoPlaying, currentIndex, cardGapDuration, autoSpeed, handleNext, handleSpeak, currentVerb]);
 
   // Keyboard Shortcuts
   useEffect(() => {
@@ -212,17 +251,17 @@ export const PresentView: React.FC<PresentViewProps> = ({ verbs, profile: _profi
         <button
           onClick={() => {
             setSelectedJlpt("All");
-            setSelectedIndustry("All");
+            setSelectedTracks([]);
           }}
           className="mt-4 px-4 py-2 rounded-full glass-panel hover:bg-surface-hover text-sm font-medium transition-colors"
         >
-          Reset Filters
+          Reset to Core JLPT Requirements
         </button>
       </div>
     );
   }
 
-  // Circular timer calculation
+  // Circular countdown calculation
   const circleRadius = 24;
   const circleCircumference = 2 * Math.PI * circleRadius;
   const strokeDashoffset = circleCircumference - (countdownProgress / 100) * circleCircumference;
@@ -230,51 +269,94 @@ export const PresentView: React.FC<PresentViewProps> = ({ verbs, profile: _profi
   return (
     <div className="flex flex-col items-center w-full max-w-4xl mx-auto px-4 py-6">
       {/* Top Filter & Calibration Pills Bar */}
-      <div className="w-full flex flex-wrap items-center justify-between gap-3 mb-6">
-        {/* JLPT Pills */}
-        <div className="flex items-center gap-1.5 p-1 rounded-full glass-panel overflow-x-auto scrollbar-none">
-          {["All", "N5", "N4", "N3", "N2", "N1"].map((lvl) => (
+      <div className="w-full flex flex-col gap-3 mb-6">
+        <div className="w-full flex flex-wrap items-center justify-between gap-3">
+          {/* JLPT Level Filter Pills */}
+          <div className="flex items-center gap-1.5 p-1 rounded-full glass-panel overflow-x-auto scrollbar-none">
+            {["All", "N5", "N4", "N3", "N2", "N1"].map((lvl) => (
+              <button
+                key={lvl}
+                onClick={() => setSelectedJlpt(lvl)}
+                className={cn(
+                  "relative px-3 py-1.5 rounded-full text-xs font-semibold transition-all duration-200",
+                  selectedJlpt === lvl
+                    ? "bg-accent text-white shadow-neon-glow"
+                    : "text-primary-muted hover:text-primary hover:bg-surface-hover"
+                )}
+              >
+                {lvl}
+              </button>
+            ))}
+          </div>
+
+          {/* Mode & Action Controls */}
+          <div className="flex items-center gap-2">
+            {/* Furigana Toggle */}
             <button
-              key={lvl}
-              onClick={() => setSelectedJlpt(lvl)}
+              onClick={() => setShowFurigana(!showFurigana)}
+              title="Toggle Furigana (F)"
               className={cn(
-                "relative px-3 py-1.5 rounded-full text-xs font-semibold transition-all duration-200",
-                selectedJlpt === lvl
-                  ? "bg-accent text-white shadow-neon-glow"
-                  : "text-primary-muted hover:text-primary hover:bg-surface-hover"
+                "flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium glass-panel transition-colors",
+                showFurigana ? "text-accent border-accent/40" : "text-primary-muted hover:text-primary"
               )}
             >
-              {lvl}
+              {showFurigana ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+              <span>Ruby</span>
             </button>
-          ))}
+
+            {/* Slideshow Settings Button */}
+            <button
+              onClick={() => setShowControlsDrawer(!showControlsDrawer)}
+              title="Auto-Presentation Settings"
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium glass-panel transition-colors",
+                showControlsDrawer ? "text-accent bg-accent/10 border-accent/40" : "text-primary-muted hover:text-primary"
+              )}
+            >
+              <Sliders className="w-4 h-4" />
+              <span>Config ({cardGapDuration}s • {autoSpeed}x)</span>
+            </button>
+          </div>
         </div>
 
-        {/* Mode & Action Controls */}
-        <div className="flex items-center gap-2">
-          {/* Furigana Toggle */}
+        {/* Multi-Select Career Industry Tracks Toggle Bar */}
+        <div className="w-full flex flex-wrap items-center gap-1.5 p-1.5 rounded-2xl glass-panel border border-border-subtle">
+          <span className="text-[11px] font-semibold text-primary-muted px-2 flex items-center gap-1">
+            <Briefcase className="w-3 h-3" />
+            <span>Tracks:</span>
+          </span>
+
+          {/* Regular JLPT Core Indicator / Clear button */}
           <button
-            onClick={() => setShowFurigana(!showFurigana)}
-            title="Toggle Furigana (F)"
+            onClick={() => setSelectedTracks([])}
             className={cn(
-              "flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium glass-panel transition-colors",
-              showFurigana ? "text-accent border-accent/40" : "text-primary-muted hover:text-primary"
+              "px-2.5 py-1 rounded-xl text-xs font-medium transition-all",
+              selectedTracks.length === 0
+                ? "bg-accent text-white shadow-neon-glow"
+                : "text-primary-muted hover:text-primary glass-panel"
             )}
           >
-            {showFurigana ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-            <span>Ruby</span>
+            Core JLPT (Default)
           </button>
 
-          {/* Slideshow Settings Button */}
-          <button
-            onClick={() => setShowControlsDrawer(!showControlsDrawer)}
-            title="Auto-Presentation Settings"
-            className={cn(
-              "p-2 rounded-full glass-panel transition-colors",
-              showControlsDrawer ? "text-accent bg-accent/10 border-accent/40" : "text-primary-muted hover:text-primary"
-            )}
-          >
-            <Sliders className="w-4 h-4" />
-          </button>
+          {ALL_INDUSTRY_TRACKS.map((track) => {
+            const isSelected = selectedTracks.includes(track.id);
+            return (
+              <button
+                key={track.id}
+                onClick={() => toggleTrack(track.id)}
+                className={cn(
+                  "px-2.5 py-1 rounded-xl text-xs font-medium transition-all flex items-center gap-1",
+                  isSelected
+                    ? "bg-accent/20 border border-accent text-accent font-semibold shadow-sm"
+                    : "glass-panel text-primary-muted hover:text-primary border border-transparent"
+                )}
+              >
+                <span>{track.short}</span>
+                {isSelected && <CheckCircle2 className="w-3 h-3 text-accent" />}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -287,57 +369,77 @@ export const PresentView: React.FC<PresentViewProps> = ({ verbs, profile: _profi
             exit={{ opacity: 0, height: 0 }}
             className="w-full glass-card p-4 mb-6 border border-border-glass rounded-2xl overflow-hidden"
           >
-            <div className="flex flex-wrap items-center justify-between gap-4 text-xs">
-              {/* Order Mode */}
-              <div className="flex items-center gap-2">
-                <span className="text-primary-muted font-medium">Order:</span>
-                {(["priority", "random", "sequential"] as AutoModeOrder[]).map((ord) => (
-                  <button
-                    key={ord}
-                    onClick={() => setAutoOrder(ord)}
-                    className={cn(
-                      "px-2.5 py-1 rounded-lg capitalize transition-colors font-medium",
-                      autoOrder === ord ? "bg-accent text-white" : "glass-panel text-primary-muted hover:text-primary"
-                    )}
-                  >
-                    {ord}
-                  </button>
-                ))}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+              {/* Card Gap Dwell Interval */}
+              <div>
+                <span className="text-primary-muted font-medium flex items-center gap-1 mb-2">
+                  <Clock className="w-3.5 h-3.5 text-accent" />
+                  <span>Card Gap Dwell Interval:</span>
+                </span>
+                <div className="flex items-center gap-1.5">
+                  {CARD_GAP_OPTIONS.map((gap) => (
+                    <button
+                      key={gap}
+                      onClick={() => setCardGapDuration(gap)}
+                      className={cn(
+                        "flex-1 py-1.5 rounded-lg text-center font-semibold transition-all",
+                        cardGapDuration === gap
+                          ? "bg-accent text-white shadow-neon-glow"
+                          : "glass-panel text-primary-muted hover:text-primary"
+                      )}
+                    >
+                      {gap}s
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {/* Speed Control */}
-              <div className="flex items-center gap-2">
-                <span className="text-primary-muted font-medium">Speed:</span>
-                {[0.5, 1.0, 1.5, 2.0].map((spd) => (
-                  <button
-                    key={spd}
-                    onClick={() => setAutoSpeed(spd)}
-                    className={cn(
-                      "px-2.5 py-1 rounded-lg transition-colors font-medium",
-                      autoSpeed === spd ? "bg-accent text-white" : "glass-panel text-primary-muted hover:text-primary"
-                    )}
-                  >
-                    {spd}x
-                  </button>
-                ))}
+              {/* Reveal & TTS Speed */}
+              <div>
+                <span className="text-primary-muted font-medium flex items-center gap-1 mb-2">
+                  <Gauge className="w-3.5 h-3.5 text-accent" />
+                  <span>TTS Audio & Reveal Speed:</span>
+                </span>
+                <div className="flex items-center gap-1.5">
+                  {SPEED_OPTIONS.map((spd) => (
+                    <button
+                      key={spd}
+                      onClick={() => setAutoSpeed(spd)}
+                      className={cn(
+                        "flex-1 py-1.5 rounded-lg text-center font-semibold transition-all",
+                        autoSpeed === spd
+                          ? "bg-accent text-white shadow-neon-glow"
+                          : "glass-panel text-primary-muted hover:text-primary"
+                      )}
+                    >
+                      {spd}x
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {/* Industry Filter inside drawer */}
-              <div className="flex items-center gap-2">
-                <span className="text-primary-muted font-medium">Track:</span>
-                <select
-                  value={selectedIndustry}
-                  onChange={(e) => setSelectedIndustry(e.target.value)}
-                  className="bg-transparent border border-border-glass rounded-lg px-2 py-1 text-xs text-primary focus:outline-none"
-                >
-                  <option value="All" className="bg-zinc-900 text-zinc-100">All Tracks</option>
-                  <option value="general" className="bg-zinc-900 text-zinc-100">General</option>
-                  <option value="it" className="bg-zinc-900 text-zinc-100">IT & Tech</option>
-                  <option value="finance" className="bg-zinc-900 text-zinc-100">Finance</option>
-                  <option value="fnb" className="bg-zinc-900 text-zinc-100">Food & Beverage</option>
-                  <option value="healthcare" className="bg-zinc-900 text-zinc-100">Healthcare</option>
-                  <option value="manufacturing" className="bg-zinc-900 text-zinc-100">Manufacturing</option>
-                </select>
+              {/* Presentation Order */}
+              <div>
+                <span className="text-primary-muted font-medium flex items-center gap-1 mb-2">
+                  <Sparkles className="w-3.5 h-3.5 text-accent" />
+                  <span>Queue Order:</span>
+                </span>
+                <div className="flex items-center gap-1.5">
+                  {(["priority", "random", "sequential"] as AutoModeOrder[]).map((ord) => (
+                    <button
+                      key={ord}
+                      onClick={() => setAutoOrder(ord)}
+                      className={cn(
+                        "flex-1 py-1.5 rounded-lg text-center capitalize font-semibold transition-all",
+                        autoOrder === ord
+                          ? "bg-accent text-white shadow-neon-glow"
+                          : "glass-panel text-primary-muted hover:text-primary"
+                      )}
+                    >
+                      {ord}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </motion.div>
@@ -524,10 +626,17 @@ export const PresentView: React.FC<PresentViewProps> = ({ verbs, profile: _profi
           <div className="relative flex items-center justify-center">
             <button
               onClick={() => setIsAutoPlaying(!isAutoPlaying)}
-              title={isAutoPlaying ? "Pause Slideshow" : "Start Auto-Presentation"}
+              title={isAutoPlaying ? "Pause Slideshow" : `Start Auto-Presentation (${cardGapDuration}s)`}
               className="relative z-10 w-12 h-12 rounded-full bg-accent hover:bg-accent-hover text-white flex items-center justify-center shadow-neon-glow transition-transform active:scale-95"
             >
-              {isAutoPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
+              {isAutoPlaying ? (
+                <div className="flex flex-col items-center justify-center">
+                  <Pause className="w-4 h-4" />
+                  <span className="text-[9px] font-mono leading-none mt-0.5">{remainingSeconds}s</span>
+                </div>
+              ) : (
+                <Play className="w-5 h-5 ml-0.5" />
+              )}
             </button>
 
             {/* SVG Circular Countdown Ring */}

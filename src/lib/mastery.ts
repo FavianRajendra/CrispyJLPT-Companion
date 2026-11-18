@@ -74,7 +74,9 @@ function calculateJlptScore(verbLevel: JlptLevel, targetLevel: JlptLevel): numbe
  * Calculates domain relevance score S_domain(v)
  */
 function calculateDomainScore(verbTags: IndustryTrack[], targetIndustries: IndustryTrack[]): number {
-  const matches = verbTags.some((tag) => targetIndustries.includes(tag));
+  const safeTargets = Array.isArray(targetIndustries) ? targetIndustries : [];
+  if (safeTargets.length === 0) return 1.0;
+  const matches = verbTags.some((tag) => safeTargets.includes(tag));
   if (matches) return 1.0;
   if (verbTags.includes("general")) return 0.5;
   return 0.15;

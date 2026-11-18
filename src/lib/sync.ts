@@ -1,4 +1,4 @@
-import { getDatabase, UserProfile, VerbProgress } from "./db";
+import { getDatabase, VerbProgress, normalizeUserProfile } from "./db";
 
 export interface SyncState {
   isOnline: boolean;
@@ -89,8 +89,8 @@ class SyncManager {
       const db = await getDatabase();
 
       // 1. Load active profile
-      const profiles = await db.select<UserProfile[]>("SELECT * FROM user_profiles LIMIT 1;");
-      const profile = profiles[0] || null;
+      const profiles = await db.select<any[]>("SELECT * FROM user_profiles LIMIT 1;");
+      const profile = profiles[0] ? normalizeUserProfile(profiles[0]) : null;
 
       // 2. Load dirty progress
       const dirtyRows = await db.select<VerbProgress[]>(

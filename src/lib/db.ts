@@ -32,6 +32,66 @@ export interface UserProfile {
   updated_at: string;
 }
 
+export function normalizeUserProfile(raw: any): UserProfile {
+  if (!raw || typeof raw !== "object") {
+    return {
+      id: "guest_user",
+      current_jlpt: "N5",
+      target_jlpt: "N2",
+      target_industries: ["it"],
+      industry_blend_ratio: 0.7,
+      daily_goal: 15,
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  let parsedIndustries: IndustryTrack[] = [];
+  if (Array.isArray(raw.target_industries)) {
+    parsedIndustries = raw.target_industries;
+  } else if (typeof raw.target_industries === "string") {
+    try {
+      const parsed = JSON.parse(raw.target_industries);
+      if (Array.isArray(parsed)) {
+        parsedIndustries = parsed;
+      } else if (typeof parsed === "string") {
+        parsedIndustries = [parsed as IndustryTrack];
+      }
+    } catch {
+      parsedIndustries = ["it"];
+    }
+  }
+
+  const validIndustries: IndustryTrack[] = [
+    "general",
+    "it",
+    "finance",
+    "fnb",
+    "healthcare",
+    "manufacturing",
+  ];
+  parsedIndustries = parsedIndustries.filter((t) => validIndustries.includes(t));
+
+  const validJlpt: JlptLevel[] = ["N5", "N4", "N3", "N2", "N1"];
+  const current_jlpt: JlptLevel = validJlpt.includes(raw.current_jlpt) ? raw.current_jlpt : "N5";
+  const target_jlpt: JlptLevel = validJlpt.includes(raw.target_jlpt) ? raw.target_jlpt : "N2";
+  const blendRatio =
+    typeof raw.industry_blend_ratio === "number" && !isNaN(raw.industry_blend_ratio)
+      ? Math.max(0.1, Math.min(0.9, raw.industry_blend_ratio))
+      : 0.7;
+  const daily_goal =
+    typeof raw.daily_goal === "number" && !isNaN(raw.daily_goal) ? raw.daily_goal : 15;
+
+  return {
+    id: String(raw.id || "guest_user"),
+    current_jlpt,
+    target_jlpt,
+    target_industries: parsedIndustries,
+    industry_blend_ratio: blendRatio,
+    daily_goal,
+    updated_at: String(raw.updated_at || new Date().toISOString()),
+  };
+}
+
 export interface VerbProgress {
   verb_id: number;
   reading_score: number; // 0.0 - 1.0
@@ -59,6 +119,15 @@ const IDB_NAME = "jlpt_verbs_browser_db";
 const IDB_STORE = "sqlite_file_store";
 const IDB_KEY = "database_sqlite_bin";
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timed out after ${ms}ms during ${label}`)), ms)
+    ),
+  ]);
+}
+
 function openIndexedDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(IDB_NAME, 1);
@@ -72,7 +141,7 @@ function openIndexedDB(): Promise<IDBDatabase> {
 
 async function loadSqliteFromIDB(): Promise<Uint8Array | null> {
   try {
-    const idb = await openIndexedDB();
+    const idb = await withTimeout(openIndexedDB(), 2000, "IndexedDB open");
     return new Promise((resolve) => {
       const tx = idb.transaction(IDB_STORE, "readonly");
       const store = tx.objectStore(IDB_STORE);
@@ -97,12 +166,19 @@ async function saveSqliteToIDB(data: Uint8Array): Promise<void> {
 }
 
 function isTauriEnvironment(): boolean {
-  return typeof window !== "undefined" && (Boolean((window as any).__TAURI_INTERNALS__) || Boolean((window as any).__TAURI__));
+  return (
+    typeof window !== "undefined" &&
+    (Boolean((window as any).__TAURI_INTERNALS__) || Boolean((window as any).__TAURI__))
+  );
 }
 
 async function createTauriDatabase(): Promise<AppDatabase> {
   const { default: Database } = await import("@tauri-apps/plugin-sql");
-  const nativeDb = await Database.load("sqlite:jlpt_verbs.db");
+  const nativeDb = await withTimeout(
+    Database.load("sqlite:jlpt_verbs.db"),
+    4000,
+    "Tauri Database.load"
+  );
   return {
     async execute(query: string, bindValues: any[] = []): Promise<any> {
       return nativeDb.execute(query, bindValues);
@@ -114,48 +190,56 @@ async function createTauriDatabase(): Promise<AppDatabase> {
 }
 
 async function createBrowserDatabase(): Promise<AppDatabase> {
-  const initSqlJs = (window as any).initSqlJs || (await import("sql.js")).default;
-  const SQL = await initSqlJs({
-    locateFile: (file: string) => `/${file}`,
-  });
+  const sqlJsModule: any = await import("sql.js");
+  const initSqlJs =
+    (window as any).initSqlJs ||
+    (typeof sqlJsModule === "function"
+      ? sqlJsModule
+      : sqlJsModule.default?.default || sqlJsModule.default);
+
+  if (typeof initSqlJs !== "function") {
+    throw new Error("initSqlJs export could not be resolved");
+  }
+
+  const SQL = await withTimeout<any>(
+    initSqlJs({
+      locateFile: (file: string) => `/${file}`,
+    }),
+    4000,
+    "sql.js WASM init"
+  );
 
   const savedBuffer = await loadSqliteFromIDB();
   const db = savedBuffer ? new SQL.Database(savedBuffer) : new SQL.Database();
 
-  const persist = () => {
-    try {
-      const binary = db.export();
-      saveSqliteToIDB(binary);
-    } catch (err) {
-      console.warn("Failed to export sql.js db:", err);
-    }
+  let persistTimer: ReturnType<typeof setTimeout> | null = null;
+  const schedulePersist = () => {
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      try {
+        const binary = db.export();
+        saveSqliteToIDB(binary);
+      } catch (err) {
+        console.warn("Failed to export sql.js db:", err);
+      }
+    }, 250);
   };
 
   return {
     async execute(query: string, bindValues: any[] = []): Promise<any> {
-      try {
-        db.run(query, bindValues);
-        persist();
-        return { rowsAffected: 1 };
-      } catch (err) {
-        console.error("SQL.js execute error:", err, "Query:", query, "Values:", bindValues);
-        throw err;
-      }
+      db.run(query, bindValues);
+      schedulePersist();
+      return { rowsAffected: 1 };
     },
     async select<T>(query: string, bindValues: any[] = []): Promise<T> {
-      try {
-        const stmt = db.prepare(query);
-        stmt.bind(bindValues);
-        const results: any[] = [];
-        while (stmt.step()) {
-          results.push(stmt.getAsObject());
-        }
-        stmt.free();
-        return results as unknown as T;
-      } catch (err) {
-        console.error("SQL.js select error:", err, "Query:", query, "Values:", bindValues);
-        throw err;
+      const stmt = db.prepare(query);
+      stmt.bind(bindValues);
+      const results: any[] = [];
+      while (stmt.step()) {
+        results.push(stmt.getAsObject());
       }
+      stmt.free();
+      return results as unknown as T;
     },
   };
 }
@@ -168,21 +252,65 @@ export async function getDatabase(): Promise<AppDatabase> {
     let db: AppDatabase;
     if (isTauriEnvironment()) {
       try {
+        console.log("[DB] Connecting to native Tauri SQLite...");
         db = await createTauriDatabase();
       } catch (e) {
-        console.warn("Tauri SQL plugin load failed, falling back to Browser SQL.js:", e);
+        console.warn("[DB] Native SQLite unavailable, falling back to WASM SQL.js:", e);
         db = await createBrowserDatabase();
       }
     } else {
+      console.log("[DB] Browser mode detected, initializing WASM SQL.js...");
       db = await createBrowserDatabase();
     }
 
     await initializeSchema(db);
     dbInstance = db;
+    console.log("[DB] Initialization complete.");
     return db;
   })();
 
-  return initPromise;
+  try {
+    return await initPromise;
+  } catch (err) {
+    initPromise = null;
+    throw err;
+  }
+}
+
+async function seedCorpusInBatches(db: AppDatabase): Promise<void> {
+  const verbs = seedVerbs as any[];
+  const BATCH_SIZE = 100; // 100 rows * 10 cols = 1,000 bind parameters per query
+
+  for (let i = 0; i < verbs.length; i += BATCH_SIZE) {
+    const chunk = verbs.slice(i, i + BATCH_SIZE);
+    const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+    const params: any[] = [];
+
+    for (const v of chunk) {
+      params.push(
+        v.id,
+        v.kanji_form,
+        v.furigana_reading,
+        typeof v.ruby_segments === "string" ? v.ruby_segments : JSON.stringify(v.ruby_segments),
+        typeof v.meanings === "string" ? v.meanings : JSON.stringify(v.meanings),
+        v.jlpt_level,
+        v.verb_group,
+        typeof v.constituent_kanji === "string"
+          ? v.constituent_kanji
+          : JSON.stringify(v.constituent_kanji),
+        typeof v.industry_tags === "string" ? v.industry_tags : JSON.stringify(v.industry_tags),
+        v.is_core_jlpt ?? 1
+      );
+    }
+
+    await db.execute(
+      `INSERT OR IGNORE INTO verbs (
+        id, kanji_form, furigana_reading, ruby_segments, meanings,
+        jlpt_level, verb_group, constituent_kanji, industry_tags, is_core_jlpt
+      ) VALUES ${placeholders};`,
+      params
+    );
+  }
 }
 
 async function initializeSchema(db: AppDatabase): Promise<void> {
@@ -231,35 +359,19 @@ async function initializeSchema(db: AppDatabase): Promise<void> {
     );
   `);
 
-  // Check if verbs table needs seeding
+  // Seed or top up verbs table if fewer rows exist than in seed_verbs.json
   const existingVerbs = await db.select<any[]>("SELECT COUNT(*) as count FROM verbs;");
   const count = existingVerbs[0]?.count || 0;
 
-  if (count === 0) {
-    for (const v of seedVerbs as any[]) {
-      await db.execute(
-        `INSERT INTO verbs (
-          id, kanji_form, furigana_reading, ruby_segments, meanings,
-          jlpt_level, verb_group, constituent_kanji, industry_tags, is_core_jlpt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-        [
-          v.id,
-          v.kanji_form,
-          v.furigana_reading,
-          typeof v.ruby_segments === "string" ? v.ruby_segments : JSON.stringify(v.ruby_segments),
-          typeof v.meanings === "string" ? v.meanings : JSON.stringify(v.meanings),
-          v.jlpt_level,
-          v.verb_group,
-          typeof v.constituent_kanji === "string" ? v.constituent_kanji : JSON.stringify(v.constituent_kanji),
-          typeof v.industry_tags === "string" ? v.industry_tags : JSON.stringify(v.industry_tags),
-          v.is_core_jlpt ?? 1,
-        ]
-      );
-    }
+  if (count < (seedVerbs as any[]).length) {
+    console.log(`[DB] Seeding corpus (${count} -> ${(seedVerbs as any[]).length} verbs)...`);
+    await seedCorpusInBatches(db);
   }
 
   // Ensure default profile exists
-  const existingProfile = await db.select<any[]>("SELECT * FROM user_profiles WHERE id = 'guest_user';");
+  const existingProfile = await db.select<any[]>(
+    "SELECT * FROM user_profiles WHERE id = 'guest_user';"
+  );
   if (!existingProfile || existingProfile.length === 0) {
     const now = new Date().toISOString();
     await db.execute(

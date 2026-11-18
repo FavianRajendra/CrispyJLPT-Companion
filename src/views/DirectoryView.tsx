@@ -4,6 +4,8 @@ import {
   Search,
   Volume2,
   X,
+  Briefcase,
+  CheckCircle2,
 } from "lucide-react";
 import { VerbWithProgress, updateFsrsProgress, saveVerbProgress } from "../lib/mastery";
 import { IndustryTrack, UserProfile } from "../lib/db";
@@ -16,12 +18,29 @@ interface DirectoryViewProps {
   onVerbUpdated: () => void;
 }
 
-export const DirectoryView: React.FC<DirectoryViewProps> = ({ verbs, profile: _profile, onVerbUpdated }) => {
+const ALL_INDUSTRY_TRACKS: { id: IndustryTrack; label: string; short: string }[] = [
+  { id: "it", label: "IT & Tech", short: "IT" },
+  { id: "finance", label: "Finance", short: "Finance" },
+  { id: "fnb", label: "Food & Beverage", short: "F&B" },
+  { id: "healthcare", label: "Healthcare", short: "Health" },
+  { id: "manufacturing", label: "Manufacturing", short: "Mfg" },
+  { id: "general", label: "General", short: "General" },
+];
+
+export const DirectoryView: React.FC<DirectoryViewProps> = ({ verbs, profile, onVerbUpdated }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedJlpt, setSelectedJlpt] = useState<string>("All");
-  const [selectedIndustry, setSelectedIndustry] = useState<string>("All");
+  const [selectedTracks, setSelectedTracks] = useState<IndustryTrack[]>(() =>
+    Array.isArray(profile.target_industries) ? profile.target_industries : []
+  );
   const [selectedTier, setSelectedTier] = useState<string>("All");
   const [activeVerbModal, setActiveVerbModal] = useState<VerbWithProgress | null>(null);
+
+  const toggleTrack = (trackId: IndustryTrack) => {
+    setSelectedTracks((prev) =>
+      prev.includes(trackId) ? prev.filter((t) => t !== trackId) : [...prev, trackId]
+    );
+  };
 
   // Filtered verbs computation
   const filteredVerbs = useMemo(() => {
@@ -40,9 +59,14 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ verbs, profile: _p
         return false;
       }
 
-      // Industry Filter
-      if (selectedIndustry !== "All" && !v.industry_tags.includes(selectedIndustry as IndustryTrack)) {
-        return false;
+      // Zero-Selection Default Rule: Regular JLPT Requirements (is_core_jlpt === 1)
+      if (selectedTracks.length === 0) {
+        if (v.is_core_jlpt !== 1) return false;
+      } else {
+        // Multi-Track Union Rule: core JLPT verbs OR any selected track
+        const matchesTrack =
+          v.is_core_jlpt === 1 || v.industry_tags.some((t) => selectedTracks.includes(t));
+        if (!matchesTrack) return false;
       }
 
       // Mastery Tier Filter
@@ -52,7 +76,7 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ verbs, profile: _p
 
       return true;
     });
-  }, [verbs, searchQuery, selectedJlpt, selectedIndustry, selectedTier]);
+  }, [verbs, searchQuery, selectedJlpt, selectedTracks, selectedTier]);
 
   const handleTriageModal = async (rating: "again" | "hard" | "easy") => {
     if (!activeVerbModal) return;
@@ -107,24 +131,6 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ verbs, profile: _p
             ))}
           </div>
 
-          {/* Industry Tracks */}
-          <div className="flex items-center gap-2">
-            <span className="text-primary-muted font-medium">Industry:</span>
-            <select
-              value={selectedIndustry}
-              onChange={(e) => setSelectedIndustry(e.target.value)}
-              className="bg-transparent border border-border-glass rounded-xl px-3 py-1.5 text-xs text-primary focus:outline-none"
-            >
-              <option value="All" className="bg-zinc-900 text-zinc-100">All Tracks</option>
-              <option value="general" className="bg-zinc-900 text-zinc-100">General</option>
-              <option value="it" className="bg-zinc-900 text-zinc-100">IT & Tech</option>
-              <option value="finance" className="bg-zinc-900 text-zinc-100">Finance & Banking</option>
-              <option value="fnb" className="bg-zinc-900 text-zinc-100">Food & Beverage</option>
-              <option value="healthcare" className="bg-zinc-900 text-zinc-100">Healthcare</option>
-              <option value="manufacturing" className="bg-zinc-900 text-zinc-100">Manufacturing</option>
-            </select>
-          </div>
-
           {/* Mastery Tier */}
           <div className="flex items-center gap-2">
             <span className="text-primary-muted font-medium">Status:</span>
@@ -141,11 +147,55 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ verbs, profile: _p
             </select>
           </div>
         </div>
+
+        {/* Multi-Select Industry Tracks Bar */}
+        <div className="w-full flex flex-wrap items-center gap-1.5 p-1.5 rounded-2xl glass-panel border border-border-subtle text-xs">
+          <span className="text-[11px] font-semibold text-primary-muted px-2 flex items-center gap-1">
+            <Briefcase className="w-3 h-3" />
+            <span>Tracks:</span>
+          </span>
+
+          <button
+            onClick={() => setSelectedTracks([])}
+            className={cn(
+              "px-2.5 py-1 rounded-xl text-xs font-medium transition-all",
+              selectedTracks.length === 0
+                ? "bg-accent text-white shadow-neon-glow"
+                : "text-primary-muted hover:text-primary glass-panel"
+            )}
+          >
+            Core JLPT (Default)
+          </button>
+
+          {ALL_INDUSTRY_TRACKS.map((track) => {
+            const isSelected = selectedTracks.includes(track.id);
+            return (
+              <button
+                key={track.id}
+                onClick={() => toggleTrack(track.id)}
+                className={cn(
+                  "px-2.5 py-1 rounded-xl text-xs font-medium transition-all flex items-center gap-1",
+                  isSelected
+                    ? "bg-accent/20 border border-accent text-accent font-semibold shadow-sm"
+                    : "glass-panel text-primary-muted hover:text-primary border border-transparent"
+                )}
+              >
+                <span>{track.short}</span>
+                {isSelected && <CheckCircle2 className="w-3 h-3 text-accent" />}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Verbs Count Header */}
       <div className="flex items-center justify-between text-xs text-primary-muted mb-4 px-1">
         <span>Showing {filteredVerbs.length} verbs</span>
+        <span>
+          {selectedTracks.length === 0
+            ? "Showing Core JLPT verbs"
+            : `Filtered by ${selectedTracks.length} track${selectedTracks.length > 1 ? "s" : ""}`}
+        </span>
       </div>
 
       {/* Verbs Grid */}

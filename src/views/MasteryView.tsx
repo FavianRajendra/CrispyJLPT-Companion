@@ -9,9 +9,13 @@ import {
   CheckCircle2,
   Briefcase,
   GraduationCap,
+  Sparkles,
+  BookOpen,
+  ArrowRight,
+  Info,
 } from "lucide-react";
 import { VerbWithProgress } from "../lib/mastery";
-import { UserProfile, JlptLevel, IndustryTrack, getDatabase } from "../lib/db";
+import { UserProfile, JlptLevel, IndustryTrack, getDatabase, normalizeUserProfile } from "../lib/db";
 import { syncManager, SyncState } from "../lib/sync";
 import { cn } from "../lib/utils";
 
@@ -19,15 +23,32 @@ interface MasteryViewProps {
   verbs: VerbWithProgress[];
   profile: UserProfile;
   onProfileUpdated: (updated: UserProfile) => void;
+  onNavigateToPresent?: () => void;
+  onNavigateToQuiz?: () => void;
 }
 
-export const MasteryView: React.FC<MasteryViewProps> = ({ verbs, profile, onProfileUpdated }) => {
-  const [localProfile, setLocalProfile] = useState<UserProfile>(profile);
+const ALL_INDUSTRY_TRACKS: { id: IndustryTrack; label: string; short: string }[] = [
+  { id: "it", label: "IT & Software Engineering", short: "IT & Tech" },
+  { id: "finance", label: "Finance & Banking", short: "Finance" },
+  { id: "fnb", label: "Food & Beverage (Culinary)", short: "F&B" },
+  { id: "healthcare", label: "Healthcare & Medicine", short: "Healthcare" },
+  { id: "manufacturing", label: "Manufacturing & Industrial", short: "Manufacturing" },
+  { id: "general", label: "General Workplace Business", short: "General" },
+];
+
+export const MasteryView: React.FC<MasteryViewProps> = ({
+  verbs,
+  profile,
+  onProfileUpdated,
+  onNavigateToPresent,
+  onNavigateToQuiz,
+}) => {
+  const [localProfile, setLocalProfile] = useState<UserProfile>(() => normalizeUserProfile(profile));
   const [syncState, setSyncState] = useState<SyncState>(syncManager.getState());
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   useEffect(() => {
-    setLocalProfile(profile);
+    setLocalProfile(normalizeUserProfile(profile));
   }, [profile]);
 
   useEffect(() => {
@@ -35,23 +56,29 @@ export const MasteryView: React.FC<MasteryViewProps> = ({ verbs, profile, onProf
     return () => unsubscribe();
   }, []);
 
-  // Compute Dual-Track Readiness
+  const safeTargetIndustries: IndustryTrack[] = Array.isArray(localProfile.target_industries)
+    ? localProfile.target_industries
+    : [];
+
+  // Compute Dual-Track Readiness safely
   const examVerbs = verbs.filter((v) => v.jlpt_level === localProfile.target_jlpt);
   const industryVerbs = verbs.filter((v) =>
-    v.industry_tags.some((t) => localProfile.target_industries.includes(t))
+    safeTargetIndustries.length === 0
+      ? v.is_core_jlpt === 1
+      : v.industry_tags.some((t) => safeTargetIndustries.includes(t))
   );
 
-  const examReadiness = Math.round(
+  const examReadiness =
     examVerbs.length > 0
-      ? examVerbs.reduce((acc, v) => acc + v.masteryScore, 0) / examVerbs.length
-      : 0
-  );
+      ? Math.round(examVerbs.reduce((acc, v) => acc + (v.masteryScore || 0), 0) / examVerbs.length)
+      : 0;
 
-  const industryReadiness = Math.round(
+  const industryReadiness =
     industryVerbs.length > 0
-      ? industryVerbs.reduce((acc, v) => acc + v.masteryScore, 0) / industryVerbs.length
-      : 0
-  );
+      ? Math.round(
+          industryVerbs.reduce((acc, v) => acc + (v.masteryScore || 0), 0) / industryVerbs.length
+        )
+      : 0;
 
   // Mastery Tier Breakdown
   const tierCounts = {
@@ -61,13 +88,31 @@ export const MasteryView: React.FC<MasteryViewProps> = ({ verbs, profile, onProf
     Unseen: verbs.filter((v) => v.tier === "Unseen").length,
   };
 
+  const totalReviews = verbs.reduce(
+    (acc, v) => acc + (v.progress ? v.progress.repetitions + v.progress.lapses : 0),
+    0
+  );
+
+  const toggleIndustryTrack = (trackId: IndustryTrack) => {
+    setLocalProfile((prev) => {
+      const current = Array.isArray(prev.target_industries) ? prev.target_industries : [];
+      let updated: IndustryTrack[];
+      if (current.includes(trackId)) {
+        updated = current.filter((t) => t !== trackId);
+      } else {
+        updated = [...current, trackId];
+      }
+      return { ...prev, target_industries: updated };
+    });
+  };
+
   const handleSaveProfile = async () => {
     const db = await getDatabase();
     const updatedIso = new Date().toISOString();
-    const updated: UserProfile = {
+    const normalized = normalizeUserProfile({
       ...localProfile,
       updated_at: updatedIso,
-    };
+    });
 
     await db.execute(
       `UPDATE user_profiles SET
@@ -79,17 +124,17 @@ export const MasteryView: React.FC<MasteryViewProps> = ({ verbs, profile, onProf
         updated_at = ?
       WHERE id = ?;`,
       [
-        updated.current_jlpt,
-        updated.target_jlpt,
-        JSON.stringify(updated.target_industries),
-        updated.industry_blend_ratio,
-        updated.daily_goal,
+        normalized.current_jlpt,
+        normalized.target_jlpt,
+        JSON.stringify(normalized.target_industries),
+        normalized.industry_blend_ratio,
+        normalized.daily_goal,
         updatedIso,
-        updated.id,
+        normalized.id,
       ]
     );
 
-    onProfileUpdated(updated);
+    onProfileUpdated(normalized);
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2000);
   };
@@ -98,8 +143,62 @@ export const MasteryView: React.FC<MasteryViewProps> = ({ verbs, profile, onProf
     syncManager.triggerSync();
   };
 
+  const industryDisplayLabel =
+    safeTargetIndustries.length > 0
+      ? safeTargetIndustries
+          .map((id) => ALL_INDUSTRY_TRACKS.find((t) => t.id === id)?.short || id)
+          .join(" + ")
+      : "Regular JLPT Requirements (Core)";
+
   return (
     <div className="w-full max-w-4xl mx-auto px-4 py-6 space-y-6">
+      {/* Zero-Review Onboarding Card */}
+      {totalReviews === 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-card p-6 rounded-[var(--card-radius)] border border-accent/30 bg-gradient-to-r from-accent/10 to-purple-500/10 shadow-glass"
+        >
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-accent text-white flex items-center justify-center shrink-0 shadow-neon-glow">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-primary flex items-center gap-2">
+                  <span>Welcome to JLPT Verb & Grammar Studio!</span>
+                </h3>
+                <p className="text-xs text-primary-muted mt-1 leading-relaxed">
+                  Your dual-axis FSRS memory engine is calibrated and ready. Complete your first study
+                  session in <strong>Present</strong> or take a <strong>Quiz</strong> to start tracking memory retention curves.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+              {onNavigateToPresent && (
+                <button
+                  onClick={onNavigateToPresent}
+                  className="flex-1 sm:flex-initial px-4 py-2 rounded-xl bg-accent hover:bg-accent-hover text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-transform active:scale-95 shadow-neon-glow"
+                >
+                  <span>Start Present</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {onNavigateToQuiz && (
+                <button
+                  onClick={onNavigateToQuiz}
+                  className="flex-1 sm:flex-initial px-4 py-2 rounded-xl glass-panel hover:bg-surface-hover text-primary text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <span>Take Quiz</span>
+                  <BookOpen className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        </motion.div>
+      )}
+
       {/* Top Dual Side-by-Side Readiness Meters */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* JLPT Exam Readiness Meter */}
@@ -122,13 +221,13 @@ export const MasteryView: React.FC<MasteryViewProps> = ({ verbs, profile, onProf
           <div className="w-full h-3 bg-border-glass rounded-full overflow-hidden mt-4">
             <motion.div
               initial={{ width: 0 }}
-              animate={{ width: `${examReadiness}%` }}
+              animate={{ width: `${Math.min(100, Math.max(0, examReadiness))}%` }}
               transition={{ duration: 0.8, ease: "easeOut" }}
               className="h-full bg-indigo-500 rounded-full"
             />
           </div>
           <p className="text-xs text-primary-muted mt-2">
-            Calculated across {examVerbs.length} {localProfile.target_jlpt} core verbs.
+            Calculated across {examVerbs.length} {localProfile.target_jlpt} verbs.
           </p>
         </div>
 
@@ -141,8 +240,8 @@ export const MasteryView: React.FC<MasteryViewProps> = ({ verbs, profile, onProf
               </div>
               <div>
                 <h3 className="font-semibold text-sm text-primary">Career Track Readiness</h3>
-                <p className="text-xs text-primary-muted capitalize">
-                  {localProfile.target_industries.join(", ")}
+                <p className="text-xs text-primary-muted truncate max-w-[180px]">
+                  {industryDisplayLabel}
                 </p>
               </div>
             </div>
@@ -154,13 +253,13 @@ export const MasteryView: React.FC<MasteryViewProps> = ({ verbs, profile, onProf
           <div className="w-full h-3 bg-border-glass rounded-full overflow-hidden mt-4">
             <motion.div
               initial={{ width: 0 }}
-              animate={{ width: `${industryReadiness}%` }}
+              animate={{ width: `${Math.min(100, Math.max(0, industryReadiness))}%` }}
               transition={{ duration: 0.8, ease: "easeOut" }}
               className="h-full bg-sky-500 rounded-full"
             />
           </div>
           <p className="text-xs text-primary-muted mt-2">
-            Calculated across {industryVerbs.length} specialized workplace verbs.
+            Calculated across {industryVerbs.length} verbs.
           </p>
         </div>
       </div>
@@ -204,28 +303,68 @@ export const MasteryView: React.FC<MasteryViewProps> = ({ verbs, profile, onProf
             </div>
           </div>
 
-          {/* Target Career Industry Track */}
+          {/* Current JLPT Level */}
           <div>
             <label className="block text-xs font-semibold text-primary-muted uppercase tracking-wider mb-2">
-              Primary Career Industry Track
+              Current Baseline JLPT
             </label>
-            <select
-              value={localProfile.target_industries[0] || "it"}
-              onChange={(e) =>
-                setLocalProfile({
-                  ...localProfile,
-                  target_industries: [e.target.value as IndustryTrack],
-                })
-              }
-              className="w-full bg-surface-card border border-border-glass rounded-xl px-4 py-2.5 text-sm text-primary focus:outline-none focus:ring-2 focus:ring-accent/50"
-            >
-              <option value="it" className="bg-zinc-900 text-zinc-100">IT & Software Engineering</option>
-              <option value="finance" className="bg-zinc-900 text-zinc-100">Finance & Banking</option>
-              <option value="fnb" className="bg-zinc-900 text-zinc-100">Food & Beverage (Culinary)</option>
-              <option value="healthcare" className="bg-zinc-900 text-zinc-100">Healthcare & Medicine</option>
-              <option value="manufacturing" className="bg-zinc-900 text-zinc-100">Manufacturing & Engineering</option>
-              <option value="general" className="bg-zinc-900 text-zinc-100">General Business</option>
-            </select>
+            <div className="grid grid-cols-5 gap-2">
+              {(["N5", "N4", "N3", "N2", "N1"] as JlptLevel[]).map((lvl) => (
+                <button
+                  key={lvl}
+                  onClick={() => setLocalProfile({ ...localProfile, current_jlpt: lvl })}
+                  className={cn(
+                    "py-2.5 rounded-xl font-bold text-xs transition-all border",
+                    localProfile.current_jlpt === lvl
+                      ? "bg-accent text-white border-accent shadow-neon-glow"
+                      : "glass-panel text-primary-muted hover:text-primary border-border-glass"
+                  )}
+                >
+                  {lvl}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Multi-Select Target Career Industry Tracks */}
+          <div className="md:col-span-2">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-semibold text-primary-muted uppercase tracking-wider">
+                Career Industry Tracks (Multi-Select)
+              </label>
+              <span className="text-[11px] text-accent font-medium">
+                {safeTargetIndustries.length === 0
+                  ? "Core JLPT default active"
+                  : `${safeTargetIndustries.length} track${safeTargetIndustries.length > 1 ? "s" : ""} selected`}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {ALL_INDUSTRY_TRACKS.map((track) => {
+                const isSelected = safeTargetIndustries.includes(track.id);
+                return (
+                  <button
+                    key={track.id}
+                    onClick={() => toggleIndustryTrack(track.id)}
+                    className={cn(
+                      "p-3 rounded-xl text-left text-xs font-medium transition-all border flex items-center justify-between",
+                      isSelected
+                        ? "bg-accent/20 border-accent text-white shadow-neon-glow"
+                        : "glass-panel border-border-glass text-primary-muted hover:text-primary hover:border-border-glass/80"
+                    )}
+                  >
+                    <span>{track.label}</span>
+                    {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-accent shrink-0 ml-1.5" />}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-primary-muted mt-1.5 flex items-center gap-1">
+              <Info className="w-3.5 h-3.5 shrink-0" />
+              <span>
+                Selecting 0 tracks defaults to <strong>Regular JLPT Requirements</strong> so you only study exam-required verbs.
+              </span>
+            </p>
           </div>
 
           {/* Exam vs. Industry Blend Ratio Slider */}
