@@ -56,7 +56,7 @@ function getProgressEntry(
 ): VerbProgress | undefined {
   if (!progressMap) return undefined;
   if (progressMap instanceof Map) {
-    return progressMap.get(verbId);
+    return progressMap?.get?.(verbId);
   }
   return progressMap[verbId];
 }

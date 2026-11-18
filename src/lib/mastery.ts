@@ -181,6 +181,30 @@ export function updateFsrsProgress(
 }
 
 /**
+ * Compatibility adapter for PresentView & QuizView (numeric grade 1 | 2 | 3)
+ */
+export function updateVerbMastery(
+  current: VerbProgress | undefined,
+  verbId: number,
+  axisTested: "reading" | "meaning" | "both",
+  grade: 1 | 2 | 3
+): VerbProgress {
+  const rating: FsrsRating = grade === 1 ? "again" : grade === 2 ? "hard" : "easy";
+  return updateFsrsProgress(current, verbId, rating, axisTested);
+}
+
+/**
+ * Compatibility adapter for PresentView weighted stochastic queue sampler
+ */
+export function computeVerbPriority(
+  verb: Verb,
+  profile: UserProfile,
+  progress?: VerbProgress
+): number {
+  return calculatePriorityScore(verb, progress, profile);
+}
+
+/**
  * Persist updated progress to local SQLite database.
  */
 export async function saveVerbProgress(progress: VerbProgress): Promise<void> {
@@ -240,7 +264,7 @@ export async function getDecoratedVerbs(profile: UserProfile): Promise<VerbWithP
   }
 
   return rawVerbs.map((v) => {
-    const prog = progressMap.get(v.id);
+    const prog = progressMap?.get?.(v.id);
     const retention = prog ? calculateRetention(prog.last_reviewed_at, prog.stability_days) : 0;
     const masteryScore = prog
       ? calculateMasteryScore(prog.reading_score, prog.meaning_score, retention, prog.repetitions)

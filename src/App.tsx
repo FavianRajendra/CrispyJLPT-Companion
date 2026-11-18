@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   PlaySquare,
@@ -18,7 +18,12 @@ import { DirectoryView } from "./views/DirectoryView";
 import { MasteryView } from "./views/MasteryView";
 import { KanjiNoteWidget } from "./components/KanjiNoteWidget";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { getDatabase, UserProfile, normalizeUserProfile } from "./lib/db";
+import {
+  getDatabase,
+  UserProfile,
+  VerbProgress,
+  normalizeUserProfile,
+} from "./lib/db";
 import { getDecoratedVerbs, VerbWithProgress } from "./lib/mastery";
 import { cn } from "./lib/utils";
 
@@ -54,6 +59,45 @@ export function App() {
   useEffect(() => {
     loadAppState();
   }, [loadAppState]);
+
+  // Build a guaranteed Map<number, VerbProgress> for every view that reads progressMap
+  const progressMap = useMemo(() => {
+    const map = new Map<number, VerbProgress>();
+    for (const v of verbs) {
+      if (v.progress) {
+        map.set(v.id, v.progress);
+      }
+    }
+    return map;
+  }, [verbs]);
+
+  const handleProfileSave = useCallback(
+    async (updated: UserProfile) => {
+      setProfile(updated);
+      try {
+        const db = await getDatabase();
+        await db.execute(
+          `UPDATE user_profiles
+           SET target_jlpt = ?,
+               daily_goal = ?,
+               target_industries = ?,
+               updated_at = ?
+           WHERE id = ?;`,
+          [
+            updated.target_jlpt,
+            updated.daily_goal,
+            JSON.stringify(updated.target_industries ?? []),
+            new Date().toISOString(),
+            updated.id,
+          ]
+        );
+      } catch (err) {
+        console.warn("Failed to persist profile update:", err);
+      }
+      await loadAppState();
+    },
+    [loadAppState]
+  );
 
   // Handle Theme Toggle
   const toggleTheme = () => {
@@ -181,7 +225,12 @@ export function App() {
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.2 }}
               >
-                <PresentView verbs={verbs} profile={profile} onVerbUpdated={loadAppState} />
+                <PresentView
+                  verbs={verbs}
+                  profile={profile}
+                  progressMap={progressMap}
+                  onVerbUpdated={loadAppState}
+                />
               </motion.div>
             )}
 
@@ -193,7 +242,12 @@ export function App() {
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.2 }}
               >
-                <QuizView verbs={verbs} profile={profile} onVerbUpdated={loadAppState} />
+                <QuizView
+                  verbs={verbs}
+                  profile={profile}
+                  progressMap={progressMap}
+                  onUpdateProgress={loadAppState}
+                />
               </motion.div>
             )}
 
@@ -217,7 +271,12 @@ export function App() {
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.2 }}
               >
-                <DirectoryView verbs={verbs} profile={profile} onVerbUpdated={loadAppState} />
+                <DirectoryView
+                  verbs={verbs}
+                  profile={profile}
+                  progressMap={progressMap}
+                  onVerbUpdated={loadAppState}
+                />
               </motion.div>
             )}
 
@@ -232,12 +291,8 @@ export function App() {
                 <MasteryView
                   verbs={verbs}
                   profile={profile}
-                  onProfileUpdated={(updated) => {
-                    setProfile(updated);
-                    loadAppState();
-                  }}
-                  onNavigateToPresent={() => setActiveTab("present")}
-                  onNavigateToQuiz={() => setActiveTab("quiz")}
+                  progressMap={progressMap}
+                  onUpdateProfile={handleProfileSave}
                 />
               </motion.div>
             )}

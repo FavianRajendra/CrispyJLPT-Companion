@@ -1,0 +1,2416 @@
+{
+  "updatedAt": "2026-11-18T19:08:57.186Z",
+  "questions": [
+    {
+      "id": 1000,
+      "sentencePre": "遅れ",
+      "sentencePost": "。",
+      "targetCategory": "slang",
+      "jlpt_level": "N4",
+      "correctAnswer": "ちゃう",
+      "options": [
+        {
+          "text": "とく",
+          "explanation": "Incorrect. Does not fit the nuance of \"I will be late.\"."
+        },
+        {
+          "text": "ちゃう",
+          "explanation": "Correct! 〜ちゃう is the casual contraction of 〜てしまう (accidental completion or regret)."
+        },
+        {
+          "text": "おく",
+          "explanation": "Incorrect. Does not fit the nuance of \"I will be late.\"."
+        },
+        {
+          "text": "みる",
+          "explanation": "Incorrect. Does not fit the nuance of \"I will be late.\"."
+        }
+      ],
+      "sentenceTranslation": "I will be late.",
+      "fullSentenceRuby": [],
+      "ruleSummary": "〜ちゃう is the casual contraction of 〜てしまう (accidental completion or regret)."
+    },
+    {
+      "id": 1001,
+      "sentencePre": "落第し",
+      "sentencePost": "！",
+      "targetCategory": "slang",
+      "jlpt_level": "N4",
+      "correctAnswer": "ちゃう",
+      "options": [
+        {
+          "text": "みる",
+          "explanation": "Incorrect. Does not fit the nuance of \"I will be a repeater!\"."
+        },
+        {
+          "text": "おく",
+          "explanation": "Incorrect. Does not fit the nuance of \"I will be a repeater!\"."
+        },
+        {
+          "text": "とく",
+          "explanation": "Incorrect. Does not fit the nuance of \"I will be a repeater!\"."
+        },
+        {
+          "text": "ちゃう",
+          "explanation": "Correct! 〜ちゃう is the casual contraction of 〜てしまう (accidental completion or regret)."
+        }
+      ],
+      "sentenceTranslation": "I will be a repeater!",
+      "fullSentenceRuby": [],
+      "ruleSummary": "〜ちゃう is the casual contraction of 〜てしまう (accidental completion or regret)."
+    },
+    {
+      "id": 1002,
+      "sentencePre": "留年し",
+      "sentencePost": "よ！",
+      "targetCategory": "slang",
+      "jlpt_level": "N4",
+      "correctAnswer": "ちゃう",
+      "options": [
+        {
+          "text": "おく",
+          "explanation": "Incorrect. Does not fit the nuance of \"I will be a repeater!\"."
+        },
+        {
+          "text": "ちゃう",
+          "explanation": "Correct! 〜ちゃう is the casual contraction of 〜てしまう (accidental completion or regret)."
+        },
+        {
+          "text": "みる",
+          "explanation": "Incorrect. Does not fit the nuance of \"I will be a repeater!\"."
+        },
+        {
+          "text": "とく",
+          "explanation": "Incorrect. Does not fit the nuance of \"I will be a repeater!\"."
+        }
+      ],
+      "sentenceTranslation": "I will be a repeater!",
+      "fullSentenceRuby": [],
+      "ruleSummary": "〜ちゃう is the casual contraction of 〜てしまう (accidental completion or regret)."
+    },
+    {
+      "id": 1003,
+      "sentencePre": "髪、切っ",
+      "sentencePost": "の？",
+      "targetCategory": "slang",
+      "jlpt_level": "N4",
+      "correctAnswer": "ちゃう",
+      "options": [
+        {
+          "text": "おく",
+          "explanation": "Incorrect. Does not fit the nuance of \"Are you going to have your hair cut?\"."
+        },
+        {
+          "text": "ちゃう",
+          "explanation": "Correct! 〜ちゃう is the casual contraction of 〜てしまう (accidental completion or regret)."
+        },
+        {
+          "text": "とく",
+          "explanation": "Incorrect. Does not fit the nuance of \"Are you going to have your hair cut?\"."
+        },
+        {
+          "text": "みる",
+          "explanation": "Incorrect. Does not fit the nuance of \"Are you going to have your hair cut?\"."
+        }
+      ],
+      "sentenceTranslation": "Are you going to have your hair cut?",
+      "fullSentenceRuby": [],
+      "ruleSummary": "〜ちゃう is the casual contraction of 〜てしまう (accidental completion or regret)."
+    },
+    {
+      "id": 1004,
+      "sentencePre": "なんか",
+      "sentencePost": "でしょ？",
+      "targetCategory": "slang",
+      "jlpt_level": "N3",
+      "correctAnswer": "微妙",
+      "options": [
+        {
+          "text": "明確",
+          "explanation": "Incorrect. Does not fit the nuance of \"It's kind of iffy, don't you think?\"."
+        },
+        {
+          "text": "微妙",
+          "explanation": "Correct! 微妙 (びみょう) in casual speech = 'meh / sketchy / hard to say'."
+        },
+        {
+          "text": "完璧",
+          "explanation": "Incorrect. Does not fit the nuance of \"It's kind of iffy, don't you think?\"."
+        },
+        {
+          "text": "新鮮",
+          "explanation": "Incorrect. Does not fit the nuance of \"It's kind of iffy, don't you think?\"."
+        }
+      ],
+      "sentenceTranslation": "It's kind of iffy, don't you think?",
+      "fullSentenceRuby": [],
+      "ruleSummary": "微妙 (びみょう) in casual speech = 'meh / sketchy / hard to say'."
+    },
+    {
+      "id": 1005,
+      "sentencePre": "私はかなり",
+      "sentencePost": "な立場にある。",
+      "targetCategory": "slang",
+      "jlpt_level": "N3",
+      "correctAnswer": "微妙",
+      "options": [
+        {
+          "text": "完璧",
+          "explanation": "Incorrect. Does not fit the nuance of \"I find myself in a rather delicate situation.\"."
+        },
+        {
+          "text": "明確",
+          "explanation": "Incorrect. Does not fit the nuance of \"I find myself in a rather delicate situation.\"."
+        },
+        {
+          "text": "新鮮",
+          "explanation": "Incorrect. Does not fit the nuance of \"I find myself in a rather delicate situation.\"."
+        },
+        {
+          "text": "微妙",
+          "explanation": "Correct! 微妙 (びみょう) in casual speech = 'meh / sketchy / hard to say'."
+        }
+      ],
+      "sentenceTranslation": "I find myself in a rather delicate situation.",
+      "fullSentenceRuby": [],
+      "ruleSummary": "微妙 (びみょう) in casual speech = 'meh / sketchy / hard to say'."
+    },
+    {
+      "id": 1006,
+      "sentencePre": "中途半端に見えてしまい",
+      "sentencePost": "だ。",
+      "targetCategory": "slang",
+      "jlpt_level": "N3",
+      "correctAnswer": "微妙",
+      "options": [
+        {
+          "text": "新鮮",
+          "explanation": "Incorrect. Does not fit the nuance of \"I don't know, it looks unfinished.\"."
+        },
+        {
+          "text": "微妙",
+          "explanation": "Correct! 微妙 (びみょう) in casual speech = 'meh / sketchy / hard to say'."
+        },
+        {
+          "text": "完璧",
+          "explanation": "Incorrect. Does not fit the nuance of \"I don't know, it looks unfinished.\"."
+        },
+        {
+          "text": "明確",
+          "explanation": "Incorrect. Does not fit the nuance of \"I don't know, it looks unfinished.\"."
+        }
+      ],
+      "sentenceTranslation": "I don't know, it looks unfinished.",
+      "fullSentenceRuby": [],
+      "ruleSummary": "微妙 (びみょう) in casual speech = 'meh / sketchy / hard to say'."
+    },
+    {
+      "id": 1007,
+      "sentencePre": "その２つの絵には",
+      "sentencePost": "な違いがある。",
+      "targetCategory": "slang",
+      "jlpt_level": "N3",
+      "correctAnswer": "微妙",
+      "options": [
+        {
+          "text": "明確",
+          "explanation": "Incorrect. Does not fit the nuance of \"There are subtle differences between the two pictures.\"."
+        },
+        {
+          "text": "完璧",
+          "explanation": "Incorrect. Does not fit the nuance of \"There are subtle differences between the two pictures.\"."
+        },
+        {
+          "text": "新鮮",
+          "explanation": "Incorrect. Does not fit the nuance of \"There are subtle differences between the two pictures.\"."
+        },
+        {
+          "text": "微妙",
+          "explanation": "Correct! 微妙 (びみょう) in casual speech = 'meh / sketchy / hard to say'."
+        }
+      ],
+      "sentenceTranslation": "There are subtle differences between the two pictures.",
+      "fullSentenceRuby": [],
+      "ruleSummary": "微妙 (びみょう) in casual speech = 'meh / sketchy / hard to say'."
+    },
+    {
+      "id": 1008,
+      "sentencePre": "このピザ、",
+      "sentencePost": "って。",
+      "targetCategory": "slang",
+      "jlpt_level": "N4",
+      "correctAnswer": "ヤバい",
+      "options": [
+        {
+          "text": "退屈",
+          "explanation": "Incorrect. Does not fit the nuance of \"This pizza is terrible.\"."
+        },
+        {
+          "text": "丁寧",
+          "explanation": "Incorrect. Does not fit the nuance of \"This pizza is terrible.\"."
+        },
+        {
+          "text": "ヤバい",
+          "explanation": "Correct! ヤバい = versatile slang meaning 'awesome / insane' OR 'dangerous / oh no'."
+        },
+        {
+          "text": "地味",
+          "explanation": "Incorrect. Does not fit the nuance of \"This pizza is terrible.\"."
+        }
+      ],
+      "sentenceTranslation": "This pizza is terrible.",
+      "fullSentenceRuby": [],
+      "ruleSummary": "ヤバい = versatile slang meaning 'awesome / insane' OR 'dangerous / oh no'."
+    },
+    {
+      "id": 1009,
+      "sentencePre": "俺、マジで寝ないと",
+      "sentencePost": "わ。",
+      "targetCategory": "slang",
+      "jlpt_level": "N4",
+      "correctAnswer": "ヤバい",
+      "options": [
+        {
+          "text": "地味",
+          "explanation": "Incorrect. Does not fit the nuance of \"I really need to get some sleep.\"."
+        },
+        {
+          "text": "退屈",
+          "explanation": "Incorrect. Does not fit the nuance of \"I really need to get some sleep.\"."
+        },
+        {
+          "text": "丁寧",
+          "explanation": "Incorrect. Does not fit the nuance of \"I really need to get some sleep.\"."
+        },
+        {
+          "text": "ヤバい",
+          "explanation": "Correct! ヤバい = versatile slang meaning 'awesome / insane' OR 'dangerous / oh no'."
+        }
+      ],
+      "sentenceTranslation": "I really need to get some sleep.",
+      "fullSentenceRuby": [],
+      "ruleSummary": "ヤバい = versatile slang meaning 'awesome / insane' OR 'dangerous / oh no'."
+    },
+    {
+      "id": 1010,
+      "sentencePre": "",
+      "sentencePost": "、トイレ行きたくなった。",
+      "targetCategory": "slang",
+      "jlpt_level": "N4",
+      "correctAnswer": "ヤバい",
+      "options": [
+        {
+          "text": "丁寧",
+          "explanation": "Incorrect. Does not fit the nuance of \"Oh no, I have to go to the bathroom.\"."
+        },
+        {
+          "text": "退屈",
+          "explanation": "Incorrect. Does not fit the nuance of \"Oh no, I have to go to the bathroom.\"."
+        },
+        {
+          "text": "ヤバい",
+          "explanation": "Correct! ヤバい = versatile slang meaning 'awesome / insane' OR 'dangerous / oh no'."
+        },
+        {
+          "text": "地味",
+          "explanation": "Incorrect. Does not fit the nuance of \"Oh no, I have to go to the bathroom.\"."
+        }
+      ],
+      "sentenceTranslation": "Oh no, I have to go to the bathroom.",
+      "fullSentenceRuby": [],
+      "ruleSummary": "ヤバい = versatile slang meaning 'awesome / insane' OR 'dangerous / oh no'."
+    },
+    {
+      "id": 1011,
+      "sentencePre": "",
+      "sentencePost": "！信号に引っかかっちゃった。遅れちゃう。",
+      "targetCategory": "slang",
+      "jlpt_level": "N4",
+      "correctAnswer": "ヤバい",
+      "options": [
+        {
+          "text": "地味",
+          "explanation": "Incorrect. Does not fit the nuance of \"Shit! I got stuck on a red light. I'm going to be late.\"."
+        },
+        {
+          "text": "丁寧",
+          "explanation": "Incorrect. Does not fit the nuance of \"Shit! I got stuck on a red light. I'm going to be late.\"."
+        },
+        {
+          "text": "ヤバい",
+          "explanation": "Correct! ヤバい = versatile slang meaning 'awesome / insane' OR 'dangerous / oh no'."
+        },
+        {
+          "text": "退屈",
+          "explanation": "Incorrect. Does not fit the nuance of \"Shit! I got stuck on a red light. I'm going to be late.\"."
+        }
+      ],
+      "sentenceTranslation": "Shit! I got stuck on a red light. I'm going to be late.",
+      "fullSentenceRuby": [],
+      "ruleSummary": "ヤバい = versatile slang meaning 'awesome / insane' OR 'dangerous / oh no'."
+    },
+    {
+      "id": 1012,
+      "sentencePre": "",
+      "sentencePost": "の苦労が水の泡になった。",
+      "targetCategory": "particle",
+      "jlpt_level": "N3",
+      "correctAnswer": "せっかく",
+      "options": [
+        {
+          "text": "たとえ",
+          "explanation": "Incorrect. Does not fit the nuance of \"All my pains were in vain.\"."
+        },
+        {
+          "text": "まさか",
+          "explanation": "Incorrect. Does not fit the nuance of \"All my pains were in vain.\"."
+        },
+        {
+          "text": "もしも",
+          "explanation": "Incorrect. Does not fit the nuance of \"All my pains were in vain.\"."
+        },
+        {
+          "text": "せっかく",
+          "explanation": "Correct! せっかく = 'with much trouble / since someone went out of their way'."
+        }
+      ],
+      "sentenceTranslation": "All my pains were in vain.",
+      "fullSentenceRuby": [],
+      "ruleSummary": "せっかく = 'with much trouble / since someone went out of their way'."
+    },
+    {
+      "id": 1013,
+      "sentencePre": "君の",
+      "sentencePost": "の名講義は猫に小判だったね。",
+      "targetCategory": "particle",
+      "jlpt_level": "N3",
+      "correctAnswer": "せっかく",
+      "options": [
+        {
+          "text": "もしも",
+          "explanation": "Incorrect. Does not fit the nuance of \"Your wonderful lecture was pearls before swine.\"."
+        },
+        {
+          "text": "まさか",
+          "explanation": "Incorrect. Does not fit the nuance of \"Your wonderful lecture was pearls before swine.\"."
+        },
+        {
+          "text": "たとえ",
+          "explanation": "Incorrect. Does not fit the nuance of \"Your wonderful lecture was pearls before swine.\"."
+        },
+        {
+          "text": "せっかく",
+          "explanation": "Correct! せっかく = 'with much trouble / since someone went out of their way'."
+        }
+      ],
+      "sentenceTranslation": "Your wonderful lecture was pearls before swine.",
+      "fullSentenceRuby": [],
+      "ruleSummary": "せっかく = 'with much trouble / since someone went out of their way'."
+    },
+    {
+      "id": 1014,
+      "sentencePre": "素晴",
+      "sentencePost": "！",
+      "targetCategory": "conjugation",
+      "jlpt_level": "N4",
+      "correctAnswer": "らしい",
+      "options": [
+        {
+          "text": "らしい",
+          "explanation": "Correct! 〜らしい = 'apparently / it seems like (based on hearsay or typical traits)'."
+        },
+        {
+          "text": "すぎる",
+          "explanation": "Incorrect. Does not fit the nuance of \"Terrific!\"."
+        },
+        {
+          "text": "そうだ",
+          "explanation": "Incorrect. Does not fit the nuance of \"Terrific!\"."
+        },
+        {
+          "text": "やすい",
+          "explanation": "Incorrect. Does not fit the nuance of \"Terrific!\"."
+        }
+      ],
+      "sentenceTranslation": "Terrific!",
+      "fullSentenceRuby": [],
+      "ruleSummary": "〜らしい = 'apparently / it seems like (based on hearsay or typical traits)'."
+    },
+    {
+      "id": 1015,
+      "sentencePre": "素晴",
+      "sentencePost": "。",
+      "targetCategory": "conjugation",
+      "jlpt_level": "N4",
+      "correctAnswer": "らしい",
+      "options": [
+        {
+          "text": "すぎる",
+          "explanation": "Incorrect. Does not fit the nuance of \"Ah, wonderful.\"."
+        },
+        {
+          "text": "そうだ",
+          "explanation": "Incorrect. Does not fit the nuance of \"Ah, wonderful.\"."
+        },
+        {
+          "text": "らしい",
+          "explanation": "Correct! 〜らしい = 'apparently / it seems like (based on hearsay or typical traits)'."
+        },
+        {
+          "text": "やすい",
+          "explanation": "Incorrect. Does not fit the nuance of \"Ah, wonderful.\"."
+        }
+      ],
+      "sentenceTranslation": "Ah, wonderful.",
+      "fullSentenceRuby": [],
+      "ruleSummary": "〜らしい = 'apparently / it seems like (based on hearsay or typical traits)'."
+    },
+    {
+      "id": 1016,
+      "sentencePre": "素晴",
+      "sentencePost": "話だ！",
+      "targetCategory": "conjugation",
+      "jlpt_level": "N4",
+      "correctAnswer": "らしい",
+      "options": [
+        {
+          "text": "やすい",
+          "explanation": "Incorrect. Does not fit the nuance of \"A really lovely story!\"."
+        },
+        {
+          "text": "そうだ",
+          "explanation": "Incorrect. Does not fit the nuance of \"A really lovely story!\"."
+        },
+        {
+          "text": "らしい",
+          "explanation": "Correct! 〜らしい = 'apparently / it seems like (based on hearsay or typical traits)'."
+        },
+        {
+          "text": "すぎる",
+          "explanation": "Incorrect. Does not fit the nuance of \"A really lovely story!\"."
+        }
+      ],
+      "sentenceTranslation": "A really lovely story!",
+      "fullSentenceRuby": [],
+      "ruleSummary": "〜らしい = 'apparently / it seems like (based on hearsay or typical traits)'."
+    }
+  ],
+  "glossDict": {
+    "今期": {
+      "reading": "こんき",
+      "meaning": "this term / current quarter"
+    },
+    "詳しく": {
+      "reading": "くわしく",
+      "meaning": "in detail / thoroughly"
+    },
+    "脆弱性": {
+      "reading": "ぜいじゃくせい",
+      "meaning": "vulnerability / weakness"
+    },
+    "空気": {
+      "reading": "くうき",
+      "meaning": "air / atmosphere / room vibe"
+    },
+    "神対応": {
+      "reading": "かみたいおう",
+      "meaning": "god-tier customer service / amazing response"
+    },
+    "塩対応": {
+      "reading": "しおたいおう",
+      "meaning": "cold / aloof response"
+    },
+    "黒歴史": {
+      "reading": "くろれきし",
+      "meaning": "embarrassing past (dark history)"
+    },
+    "推し活": {
+      "reading": "おしかつ",
+      "meaning": "supporting one's favorite idol/character"
+    },
+    "爆笑": {
+      "reading": "ばくしょう",
+      "meaning": "roaring with laughter"
+    },
+    "秒速": {
+      "reading": "びょうそく",
+      "meaning": "instant / within seconds"
+    },
+    "飯": {
+      "reading": "めし",
+      "meaning": "cooked rice"
+    },
+    "昨日": {
+      "reading": "きのう",
+      "meaning": "yesterday"
+    },
+    "食": {
+      "reading": "しょく",
+      "meaning": "food, foodstuff"
+    },
+    "毎日": {
+      "reading": "まいにち",
+      "meaning": "every day, daily"
+    },
+    "肉": {
+      "reading": "にく",
+      "meaning": "flesh"
+    },
+    "形": {
+      "reading": "かたち",
+      "meaning": "(physical) form, shape, figure"
+    },
+    "朝": {
+      "reading": "あさ",
+      "meaning": "morning"
+    },
+    "辞書形": {
+      "reading": "じしょけい",
+      "meaning": "dictionary form"
+    },
+    "美味": {
+      "reading": "びみ",
+      "meaning": "exquisite flavor (flavour), delectable flavor, delicious flavor"
+    },
+    "可能形": {
+      "reading": "かのうけい",
+      "meaning": "potential form"
+    },
+    "受身形": {
+      "reading": "うけみけい",
+      "meaning": "passive form, passive voice"
+    },
+    "行": {
+      "reading": "ぎょう",
+      "meaning": "line (of text), row, verse"
+    },
+    "一緒": {
+      "reading": "いっしょ",
+      "meaning": "(doing) together"
+    },
+    "書": {
+      "reading": "ふみ",
+      "meaning": "letter, note, mail"
+    },
+    "丁寧": {
+      "reading": "ていねい",
+      "meaning": "polite, courteous, civil"
+    },
+    "手紙": {
+      "reading": "てがみ",
+      "meaning": "letter, note"
+    },
+    "返事": {
+      "reading": "へんじ",
+      "meaning": "reply, answer, response"
+    },
+    "名前": {
+      "reading": "なまえ",
+      "meaning": "name"
+    },
+    "意向形": {
+      "reading": "いこうけい",
+      "meaning": "volitional form (of a Japanese verb)"
+    },
+    "報告書": {
+      "reading": "ほうこくしょ",
+      "meaning": "(written) report"
+    },
+    "装": {
+      "reading": "そう",
+      "meaning": "clothing, dressing"
+    },
+    "今回": {
+      "reading": "こんかい",
+      "meaning": "this time, now"
+    },
+    "漢字": {
+      "reading": "かんじ",
+      "meaning": "kanji, Chinese character"
+    },
+    "新機能": {
+      "reading": "しんきのう",
+      "meaning": "new functionality, new feature"
+    },
+    "記事": {
+      "reading": "きじ",
+      "meaning": "article, news story, report"
+    },
+    "実": {
+      "reading": "じつ",
+      "meaning": "truth, reality"
+    },
+    "実装": {
+      "reading": "じっそう",
+      "meaning": "implementation (e.g. of a feature), installation (of equipment), mounting"
+    },
+    "日記": {
+      "reading": "にっき",
+      "meaning": "diary, journal"
+    },
+    "魚": {
+      "reading": "さかな",
+      "meaning": "fish"
+    },
+    "今日": {
+      "reading": "きょう",
+      "meaning": "today, this day"
+    },
+    "仕様書": {
+      "reading": "しようしょ",
+      "meaning": "manual, instructions, guide"
+    },
+    "次期": {
+      "reading": "じき",
+      "meaning": "next term, next period"
+    },
+    "私": {
+      "reading": "わたし",
+      "meaning": "I, me"
+    },
+    "早速": {
+      "reading": "さっそく",
+      "meaning": "at once, immediately, without delay"
+    },
+    "中": {
+      "reading": "ちゅう",
+      "meaning": "medium (size), average (grade, level, etc.), middle"
+    },
+    "通": {
+      "reading": "つう",
+      "meaning": "authority, expert, connoisseur"
+    },
+    "話": {
+      "reading": "はなし",
+      "meaning": "talk, speech, chat"
+    },
+    "歩": {
+      "reading": "あゆみ",
+      "meaning": "walking"
+    },
+    "雨": {
+      "reading": "あめ",
+      "meaning": "rain"
+    },
+    "好": {
+      "reading": "こう",
+      "meaning": "good"
+    },
+    "日本語": {
+      "reading": "にほんご",
+      "meaning": "Japanese (language)"
+    },
+    "降": {
+      "reading": "おりる",
+      "meaning": "to descend (e.g. a mountain), to go down, to come down"
+    },
+    "道": {
+      "reading": "みち",
+      "meaning": "road, path, street"
+    },
+    "空": {
+      "reading": "そら",
+      "meaning": "sky, the air, the heavens"
+    },
+    "達": {
+      "reading": "たち",
+      "meaning": "pluralizing suffix (esp. for people and animals; formerly honorific)"
+    },
+    "友": {
+      "reading": "とも",
+      "meaning": "friend, companion, comrade"
+    },
+    "飛": {
+      "reading": "ひ",
+      "meaning": "rook"
+    },
+    "公園": {
+      "reading": "こうえん",
+      "meaning": "(public) park"
+    },
+    "箸": {
+      "reading": "はし",
+      "meaning": "chopsticks"
+    },
+    "送": {
+      "reading": "おくる",
+      "meaning": "to send, to dispatch, to forward"
+    },
+    "西": {
+      "reading": "にし",
+      "meaning": "west"
+    },
+    "学校": {
+      "reading": "がっこう",
+      "meaning": "school"
+    },
+    "電車": {
+      "reading": "でんしゃ",
+      "meaning": "train, electric train"
+    },
+    "勉強": {
+      "reading": "べんきょう",
+      "meaning": "study"
+    },
+    "友達": {
+      "reading": "ともだち",
+      "meaning": "friend, companion"
+    },
+    "図書館": {
+      "reading": "としょかん",
+      "meaning": "library"
+    },
+    "同僚": {
+      "reading": "どうりょう",
+      "meaning": "coworker, co-worker, colleague"
+    },
+    "一歩": {
+      "reading": "いっぽ",
+      "meaning": "(a) step, one step"
+    },
+    "相談": {
+      "reading": "そうだん",
+      "meaning": "consultation, discussion, discussing"
+    },
+    "可能": {
+      "reading": "かのう",
+      "meaning": "possible, potential, practicable"
+    },
+    "言": {
+      "reading": "げん",
+      "meaning": "word, remark, statement"
+    },
+    "未来": {
+      "reading": "みらい",
+      "meaning": "(distant) future"
+    },
+    "思": {
+      "reading": "おもう",
+      "meaning": "to think, to consider, to believe"
+    },
+    "向": {
+      "reading": "むこう",
+      "meaning": "opposite side, other side"
+    },
+    "早": {
+      "reading": "はや",
+      "meaning": "already, now, by this time"
+    },
+    "持": {
+      "reading": "じ",
+      "meaning": "draw (in go, poetry contest, etc.), tie"
+    },
+    "傘": {
+      "reading": "かさ",
+      "meaning": "umbrella, parasol"
+    },
+    "時": {
+      "reading": "とき",
+      "meaning": "time, hour, moment"
+    },
+    "終": {
+      "reading": "おわり",
+      "meaning": "end, ending, close"
+    },
+    "働": {
+      "reading": "はたらく",
+      "meaning": "to work, to labor, to labour"
+    },
+    "大切": {
+      "reading": "たいせつ",
+      "meaning": "important, significant, serious"
+    },
+    "一生懸命": {
+      "reading": "いっしょうけんめい",
+      "meaning": "very hard, with utmost effort, as hard as one can"
+    },
+    "不合格": {
+      "reading": "ふごうかく",
+      "meaning": "(examination) failure, rejection, disqualification"
+    },
+    "下": {
+      "reading": "した",
+      "meaning": "below, down, under"
+    },
+    "熱": {
+      "reading": "ねつ",
+      "meaning": "heat"
+    },
+    "薬": {
+      "reading": "くすり",
+      "meaning": "medicine, pharmaceuticals, (legal) drugs"
+    },
+    "飲": {
+      "reading": "いん",
+      "meaning": "drinking (sometimes esp. alcohol), drink, drinking party"
+    },
+    "健康": {
+      "reading": "けんこう",
+      "meaning": "health"
+    },
+    "音楽": {
+      "reading": "おんがく",
+      "meaning": "music"
+    },
+    "来": {
+      "reading": "らい",
+      "meaning": "next (year, spring, etc.), coming"
+    },
+    "今年": {
+      "reading": "ことし",
+      "meaning": "this year"
+    },
+    "日本": {
+      "reading": "にほん",
+      "meaning": "Japan"
+    },
+    "聞": {
+      "reading": "きく",
+      "meaning": "to hear"
+    },
+    "見": {
+      "reading": "み",
+      "meaning": "looking, viewing"
+    },
+    "遊": {
+      "reading": "あそび",
+      "meaning": "play, playing, game"
+    },
+    "借": {
+      "reading": "かりる",
+      "meaning": "to borrow"
+    },
+    "場所": {
+      "reading": "ばしょ",
+      "meaning": "place, location, spot"
+    },
+    "願": {
+      "reading": "ねがい",
+      "meaning": "desire, wish, hope"
+    },
+    "動作": {
+      "reading": "どうさ",
+      "meaning": "movement (of the body), action, motion"
+    },
+    "月曜日": {
+      "reading": "げつようび",
+      "meaning": "Monday"
+    },
+    "起": {
+      "reading": "おこり",
+      "meaning": "source, origin, cause"
+    },
+    "使": {
+      "reading": "し",
+      "meaning": "messenger"
+    },
+    "買": {
+      "reading": "かいもの",
+      "meaning": "shopping, purchased goods"
+    },
+    "促音便": {
+      "reading": "そくおんびん",
+      "meaning": "nasal sound change (generation of geminate consonant, primarily a geminate 't' from vowel stems ending in 'i')"
+    },
+    "合": {
+      "reading": "ごう",
+      "meaning": "gō, traditional unit of volume, approx. 180 ml"
+    },
+    "新": {
+      "reading": "しん",
+      "meaning": "new, neo-"
+    },
+    "開発": {
+      "reading": "かいはつ",
+      "meaning": "development, cultivation, application"
+    },
+    "毎日遅": {
+      "reading": "まいにち",
+      "meaning": "every day, daily"
+    },
+    "調": {
+      "reading": "ちょう",
+      "meaning": "key"
+    },
+    "残業": {
+      "reading": "ざんぎょう",
+      "meaning": "overtime (work)"
+    },
+    "準備": {
+      "reading": "じゅんび",
+      "meaning": "preparation, arrangements, getting ready"
+    },
+    "詳": {
+      "reading": "くわしい",
+      "meaning": "detailed, full, minute"
+    },
+    "大規模": {
+      "reading": "だいきぼ",
+      "meaning": "large-scale"
+    },
+    "遅": {
+      "reading": "おそい",
+      "meaning": "slow"
+    },
+    "発見": {
+      "reading": "はっけん",
+      "meaning": "discovery, detection, finding"
+    },
+    "原因": {
+      "reading": "げんいん",
+      "meaning": "cause, origin, source"
+    },
+    "少": {
+      "reading": "しょう",
+      "meaning": "small, little, few"
+    },
+    "数日": {
+      "reading": "すうじつ",
+      "meaning": "few days"
+    },
+    "難解": {
+      "reading": "なんかい",
+      "meaning": "difficult to understand, unintelligible, abstruse"
+    },
+    "特定": {
+      "reading": "とくてい",
+      "meaning": "specific, particular, designated"
+    },
+    "先輩": {
+      "reading": "せんぱい",
+      "meaning": "senior (at school, work, etc.), superior, elder"
+    },
+    "移行": {
+      "reading": "いこう",
+      "meaning": "transition, changeover, switchover"
+    },
+    "真": {
+      "reading": "まこと",
+      "meaning": "truth, reality, fact"
+    },
+    "条項": {
+      "reading": "じょうこう",
+      "meaning": "clause, article, stipulations"
+    },
+    "挑戦": {
+      "reading": "ちょうせん",
+      "meaning": "challenge, defiance, dare"
+    },
+    "上": {
+      "reading": "うえ",
+      "meaning": "above, over, up"
+    },
+    "生": {
+      "reading": "なま",
+      "meaning": "raw, uncooked, fresh"
+    },
+    "正式": {
+      "reading": "せいしき",
+      "meaning": "formal, official, regular"
+    },
+    "契約書": {
+      "reading": "けいやくしょ",
+      "meaning": "(written) contract, agreement"
+    },
+    "恐": {
+      "reading": "こわ",
+      "meaning": "frightening, terrifying"
+    },
+    "明日": {
+      "reading": "あした",
+      "meaning": "tomorrow"
+    },
+    "取": {
+      "reading": "とり",
+      "meaning": "taking, taker, collecting"
+    },
+    "精査": {
+      "reading": "せいさ",
+      "meaning": "close investigation, careful examination, scrutiny"
+    },
+    "交": {
+      "reading": "こう",
+      "meaning": "association, fellowship"
+    },
+    "合意": {
+      "reading": "ごうい",
+      "meaning": "(coming to an) agreement, consent, mutual understanding"
+    },
+    "会社": {
+      "reading": "かいしゃ",
+      "meaning": "company, corporation, firm"
+    },
+    "駅": {
+      "reading": "えき",
+      "meaning": "railway station, train station"
+    },
+    "分": {
+      "reading": "ぶん",
+      "meaning": "part, portion, share"
+    },
+    "気": {
+      "reading": "き",
+      "meaning": "spirit, mind, heart"
+    },
+    "来月": {
+      "reading": "らいげつ",
+      "meaning": "next month"
+    },
+    "転勤": {
+      "reading": "てんきん",
+      "meaning": "job transfer, job relocation, intra-company transfer"
+    },
+    "会議": {
+      "reading": "かいぎ",
+      "meaning": "meeting, conference, session"
+    },
+    "努力": {
+      "reading": "どりょく",
+      "meaning": "effort, exertion, endeavour"
+    },
+    "大阪支店": {
+      "reading": "おおさか",
+      "meaning": "Osaka (city, prefecture)"
+    },
+    "始": {
+      "reading": "はじめ",
+      "meaning": "beginning, start, outset"
+    },
+    "毎日日本語": {
+      "reading": "まいにち",
+      "meaning": "every day, daily"
+    },
+    "味": {
+      "reading": "あじ",
+      "meaning": "flavor, flavour, taste"
+    },
+    "高": {
+      "reading": "たか",
+      "meaning": "quantity, amount, volume"
+    },
+    "支店": {
+      "reading": "してん",
+      "meaning": "branch office, branch store"
+    },
+    "経験": {
+      "reading": "けいけん",
+      "meaning": "experience"
+    },
+    "浅": {
+      "reading": "あさい",
+      "meaning": "shallow, superficial"
+    },
+    "郵便局": {
+      "reading": "ゆうびんきょく",
+      "meaning": "post office"
+    },
+    "値段": {
+      "reading": "ねだん",
+      "meaning": "price, cost"
+    },
+    "大阪": {
+      "reading": "おおさか",
+      "meaning": "Osaka (city, prefecture)"
+    },
+    "技術": {
+      "reading": "ぎじゅつ",
+      "meaning": "technology, engineering"
+    },
+    "進化": {
+      "reading": "しんか",
+      "meaning": "evolution"
+    },
+    "冷静": {
+      "reading": "れいせい",
+      "meaning": "calmness, composure, coolness"
+    },
+    "対応": {
+      "reading": "たいおう",
+      "meaning": "correspondence (to), equivalence"
+    },
+    "方": {
+      "reading": "ほう",
+      "meaning": "direction, way, side"
+    },
+    "彼": {
+      "reading": "かれ",
+      "meaning": "he, him"
+    },
+    "変化": {
+      "reading": "へんか",
+      "meaning": "change, variation, alteration"
+    },
+    "得": {
+      "reading": "とく",
+      "meaning": "profit, advantage, benefit"
+    },
+    "慎重": {
+      "reading": "しんちょう",
+      "meaning": "careful, cautious, prudent"
+    },
+    "議論": {
+      "reading": "ぎろん",
+      "meaning": "argument, discussion, dispute"
+    },
+    "説明": {
+      "reading": "せつめい",
+      "meaning": "explanation, exposition, description"
+    },
+    "専門用語": {
+      "reading": "せんもんようご",
+      "meaning": "technical term, terminology, jargon"
+    },
+    "関": {
+      "reading": "せき",
+      "meaning": "barrier, gate"
+    },
+    "反": {
+      "reading": "はん",
+      "meaning": "anti-"
+    },
+    "個人": {
+      "reading": "こじん",
+      "meaning": "individual, private person, personal"
+    },
+    "理解": {
+      "reading": "りかい",
+      "meaning": "understanding, comprehension, appreciation"
+    },
+    "終電逃": {
+      "reading": "しゅうでん",
+      "meaning": "last train (of the day)"
+    },
+    "素人": {
+      "reading": "しろうと",
+      "meaning": "amateur, layman, ordinary person"
+    },
+    "真面目": {
+      "reading": "まじめ",
+      "meaning": "serious, earnest, sober"
+    },
+    "切": {
+      "reading": "きり",
+      "meaning": "end, finish, place to stop"
+    },
+    "締": {
+      "reading": "しめる",
+      "meaning": "to tie, to fasten, to tighten"
+    },
+    "忘": {
+      "reading": "わすれもの",
+      "meaning": "lost article, thing left behind"
+    },
+    "帰": {
+      "reading": "かえる",
+      "meaning": "to return, to come home, to go home"
+    },
+    "机": {
+      "reading": "つくえ",
+      "meaning": "desk"
+    },
+    "並": {
+      "reading": "なみ",
+      "meaning": "average, medium, common"
+    },
+    "終電": {
+      "reading": "しゅうでん",
+      "meaning": "last train (of the day)"
+    },
+    "一口食": {
+      "reading": "ひとくちたべる",
+      "meaning": "to eat a mouthful, to take a bite"
+    },
+    "資料": {
+      "reading": "しりょう",
+      "meaning": "material, materials, data"
+    },
+    "地味": {
+      "reading": "じみ",
+      "meaning": "plain, simple, subdued"
+    },
+    "逃": {
+      "reading": "にげる",
+      "meaning": "to run away, to flee, to get away (e.g. from danger)"
+    },
+    "前": {
+      "reading": "ぜん",
+      "meaning": "last (i.e. immediately preceding), previous, ex-"
+    },
+    "空気読": {
+      "reading": "くうきよめない",
+      "meaning": "unable to read the situation, unable to pick up on the mood (e.g. of a conversation), unable to read the room"
+    },
+    "物足": {
+      "reading": "ものたりない",
+      "meaning": "unsatisfied, unsatisfactory, insufficient in some way"
+    },
+    "退屈": {
+      "reading": "たいくつ",
+      "meaning": "tedious, boring, dull"
+    },
+    "天気": {
+      "reading": "てんき",
+      "meaning": "weather"
+    },
+    "一口": {
+      "reading": "ひとくち",
+      "meaning": "mouthful, morsel, bite"
+    },
+    "景気": {
+      "reading": "けいき",
+      "meaning": "business conditions, the market, economic activity"
+    },
+    "真剣": {
+      "reading": "しんけん",
+      "meaning": "serious, earnest"
+    },
+    "気分": {
+      "reading": "きぶん",
+      "meaning": "feeling, mood"
+    },
+    "微妙": {
+      "reading": "びみょう",
+      "meaning": "subtle, delicate, fine"
+    },
+    "完璧": {
+      "reading": "かんぺき",
+      "meaning": "perfect, complete, flawless"
+    },
+    "正直": {
+      "reading": "しょうじき",
+      "meaning": "honest, frank, candid"
+    },
+    "貴重": {
+      "reading": "きちょう",
+      "meaning": "precious, valuable"
+    },
+    "映画": {
+      "reading": "えいが",
+      "meaning": "movie, film, motion picture"
+    },
+    "一番早": {
+      "reading": "いちばん",
+      "meaning": "number one, first, first place"
+    },
+    "新鮮": {
+      "reading": "しんせん",
+      "meaning": "fresh, new"
+    },
+    "出": {
+      "reading": "で",
+      "meaning": "coming out, going out, outflow"
+    },
+    "投稿": {
+      "reading": "とうこう",
+      "meaning": "contribution (to a newspaper, magazine, etc.), submission, post (on a blog, social media, etc.)"
+    },
+    "一番": {
+      "reading": "いちばん",
+      "meaning": "number one, first, first place"
+    },
+    "万人": {
+      "reading": "ばんにん",
+      "meaning": "all people, everybody"
+    },
+    "増": {
+      "reading": "ぞう",
+      "meaning": "increase"
+    },
+    "急": {
+      "reading": "きゅう",
+      "meaning": "sudden, abrupt, unexpected"
+    },
+    "昨日投稿": {
+      "reading": "きのう",
+      "meaning": "yesterday"
+    },
+    "動画": {
+      "reading": "どうが",
+      "meaning": "video (esp. digital), video clip, clip"
+    },
+    "昔": {
+      "reading": "むかし",
+      "meaning": "the old days, the past, former times"
+    },
+    "海": {
+      "reading": "うみ",
+      "meaning": "sea, ocean, waters"
+    },
+    "今": {
+      "reading": "いま",
+      "meaning": "now, the present time, just now"
+    },
+    "間": {
+      "reading": "あいだ",
+      "meaning": "space (between), gap, interval"
+    },
+    "充": {
+      "reading": "じゅうぶん",
+      "meaning": "enough, sufficient, plenty"
+    },
+    "時間": {
+      "reading": "じかん",
+      "meaning": "time"
+    },
+    "夕暮": {
+      "reading": "ゆうぐれ",
+      "meaning": "evening, dusk, twilight"
+    },
+    "写真": {
+      "reading": "しゃしん",
+      "meaning": "photograph, photo, picture"
+    },
+    "問": {
+      "reading": "とい",
+      "meaning": "question, query"
+    },
+    "見返": {
+      "reading": "みかえし",
+      "meaning": "endpaper (of a book), end-paper"
+    },
+    "気持": {
+      "reading": "きもち",
+      "meaning": "feeling, sensation, mood"
+    },
+    "窓口": {
+      "reading": "まどぐち",
+      "meaning": "counter, window, teller window"
+    },
+    "炎上": {
+      "reading": "えんじょう",
+      "meaning": "going up in flames, destruction by fire (esp. of a large building)"
+    },
+    "会": {
+      "reading": "かい",
+      "meaning": "meeting, assembly, party"
+    },
+    "迷惑": {
+      "reading": "めいわく",
+      "meaning": "trouble, bother, annoyance"
+    },
+    "武勇伝": {
+      "reading": "ぶゆうでん",
+      "meaning": "biography of a brave fighter, heroic saga, chivalric romance"
+    },
+    "中学生": {
+      "reading": "ちゅうがくせい",
+      "meaning": "junior high school student, middle school pupil"
+    },
+    "土壇場": {
+      "reading": "どたんば",
+      "meaning": "last moment, eleventh hour"
+    },
+    "頃": {
+      "reading": "ころ",
+      "meaning": "(approximate) time, around, about"
+    },
+    "豆知識": {
+      "reading": "まめちしき",
+      "meaning": "trivia, snippet of knowledge"
+    },
+    "活": {
+      "reading": "かつ",
+      "meaning": "living, life"
+    },
+    "楽": {
+      "reading": "らく",
+      "meaning": "comfort, ease, relief"
+    },
+    "就活": {
+      "reading": "しゅうかつ",
+      "meaning": "job hunting, job searching"
+    },
+    "週末": {
+      "reading": "しゅうまつ",
+      "meaning": "weekend"
+    },
+    "全力": {
+      "reading": "ぜんりょく",
+      "meaning": "all one's power (strength, energy, efforts), one's utmost"
+    },
+    "遠征": {
+      "reading": "えんせい",
+      "meaning": "(military) expedition, campaign"
+    },
+    "推": {
+      "reading": "すいせん",
+      "meaning": "recommendation, referral, endorsement"
+    },
+    "常識": {
+      "reading": "じょうしき",
+      "meaning": "common sense, good sense, common knowledge"
+    },
+    "範囲": {
+      "reading": "はんい",
+      "meaning": "extent, scope, sphere"
+    },
+    "婚活": {
+      "reading": "こんかつ",
+      "meaning": "searching for a marriage partner, marriage hunting, activities leading to marriage (e.g. dating, courtship)"
+    },
+    "留年": {
+      "reading": "りゅうねん",
+      "meaning": "repeating a year (at school), staying in the same class for another year"
+    },
+    "立場": {
+      "reading": "たちば",
+      "meaning": "position, situation"
+    },
+    "落第": {
+      "reading": "らくだい",
+      "meaning": "failure (in an examination), failing to advance (to the next year)"
+    },
+    "朝活": {
+      "reading": "あさかつ",
+      "meaning": "using early morning time (before going to work) for some other activity (e.g. study)"
+    },
+    "広": {
+      "reading": "こうこく",
+      "meaning": "advertisement, advertising"
+    },
+    "髪": {
+      "reading": "かみ",
+      "meaning": "hair (on the head)"
+    },
+    "俺": {
+      "reading": "おれ",
+      "meaning": "I, me"
+    },
+    "苦労": {
+      "reading": "くろう",
+      "meaning": "trouble, hardship, difficulty"
+    },
+    "寝": {
+      "reading": "ね",
+      "meaning": "sleep"
+    },
+    "絵": {
+      "reading": "え",
+      "meaning": "picture, drawing, painting"
+    },
+    "引": {
+      "reading": "びき",
+      "meaning": "-off (price reduction), discount"
+    },
+    "違": {
+      "reading": "ちがう",
+      "meaning": "to differ (from), to be different, to be distinct"
+    },
+    "君": {
+      "reading": "きみ",
+      "meaning": "you, buddy, pal"
+    },
+    "泡": {
+      "reading": "あわ",
+      "meaning": "bubble, foam, froth"
+    },
+    "猫": {
+      "reading": "ねこ",
+      "meaning": "cat (esp. the domestic cat, Felis catus), feline"
+    },
+    "素晴": {
+      "reading": "すばらしい",
+      "meaning": "wonderful, splendid, magnificent"
+    },
+    "水": {
+      "reading": "みず",
+      "meaning": "water (esp. cool or cold)"
+    },
+    "小判": {
+      "reading": "こばん",
+      "meaning": "koban, small oval gold coin used in the Edo period"
+    },
+    "名講義": {
+      "reading": "な",
+      "meaning": "name, given name"
+    },
+    "日": {
+      "reading": "ひ",
+      "meaning": "day, sun, Japan"
+    },
+    "可": {
+      "reading": "べ",
+      "meaning": "can, passable, approval"
+    },
+    "能": {
+      "reading": "よ",
+      "meaning": "ability, talent, skill"
+    },
+    "辞": {
+      "reading": "や",
+      "meaning": "resign, word, term"
+    },
+    "毎": {
+      "reading": "ごと",
+      "meaning": "every"
+    },
+    "昨": {
+      "reading": "サク",
+      "meaning": "yesterday, previous"
+    },
+    "物": {
+      "reading": "もの",
+      "meaning": "thing, object, matter"
+    },
+    "何": {
+      "reading": "なに",
+      "meaning": "what"
+    },
+    "辛": {
+      "reading": "から",
+      "meaning": "spicy, bitter, hot"
+    },
+    "美": {
+      "reading": "うつく",
+      "meaning": "beauty, beautiful"
+    },
+    "誰": {
+      "reading": "だれ",
+      "meaning": "who, someone, somebody"
+    },
+    "手": {
+      "reading": "て",
+      "meaning": "hand"
+    },
+    "紙": {
+      "reading": "かみ",
+      "meaning": "paper"
+    },
+    "意": {
+      "reading": "イ",
+      "meaning": "idea, mind, heart"
+    },
+    "受": {
+      "reading": "う",
+      "meaning": "accept, undergo, answer (phone)"
+    },
+    "告": {
+      "reading": "つ",
+      "meaning": "revelation, tell, inform"
+    },
+    "報": {
+      "reading": "むく",
+      "meaning": "report, news, reward"
+    },
+    "一": {
+      "reading": "ひと",
+      "meaning": "one, one radical (no.1)"
+    },
+    "身": {
+      "reading": "み",
+      "meaning": "somebody, person, one's station in life"
+    },
+    "緒": {
+      "reading": "お",
+      "meaning": "thong, beginning, inception"
+    },
+    "名": {
+      "reading": "な",
+      "meaning": "name, noted, distinguished"
+    },
+    "機": {
+      "reading": "はた",
+      "meaning": "loom, mechanism, machine"
+    },
+    "回": {
+      "reading": "まわ",
+      "meaning": "-times, round, game"
+    },
+    "漢": {
+      "reading": "カン",
+      "meaning": "Sino-, China"
+    },
+    "字": {
+      "reading": "あざ",
+      "meaning": "character, letter, word"
+    },
+    "返": {
+      "reading": "かえ",
+      "meaning": "return, answer, fade"
+    },
+    "丁": {
+      "reading": "ひのと",
+      "meaning": "street, ward, town"
+    },
+    "記": {
+      "reading": "しる",
+      "meaning": "scribe, account, narrative"
+    },
+    "事": {
+      "reading": "こと",
+      "meaning": "matter, thing, fact"
+    },
+    "寧": {
+      "reading": "むし",
+      "meaning": "rather, preferably, peaceful"
+    },
+    "次": {
+      "reading": "つ",
+      "meaning": "next, order, sequence"
+    },
+    "公": {
+      "reading": "おおやけ",
+      "meaning": "public, prince, official"
+    },
+    "本": {
+      "reading": "もと",
+      "meaning": "book, present, main"
+    },
+    "仕": {
+      "reading": "つか",
+      "meaning": "attend, doing, official"
+    },
+    "速": {
+      "reading": "はや",
+      "meaning": "quick, fast"
+    },
+    "期": {
+      "reading": "キ",
+      "meaning": "period, time, date"
+    },
+    "様": {
+      "reading": "さま",
+      "meaning": "Esq., way, manner"
+    },
+    "語": {
+      "reading": "かた",
+      "meaning": "word, speech, language"
+    },
+    "園": {
+      "reading": "その",
+      "meaning": "park, garden, yard"
+    },
+    "読": {
+      "reading": "よ",
+      "meaning": "read"
+    },
+    "京": {
+      "reading": "みやこ",
+      "meaning": "capital, 10**16"
+    },
+    "散": {
+      "reading": "ち",
+      "meaning": "scatter, disperse, spend"
+    },
+    "校": {
+      "reading": "コウ",
+      "meaning": "exam, school, printing"
+    },
+    "強": {
+      "reading": "つよ",
+      "meaning": "strong"
+    },
+    "車": {
+      "reading": "くるま",
+      "meaning": "car"
+    },
+    "図": {
+      "reading": "え",
+      "meaning": "map, drawing, plan"
+    },
+    "電": {
+      "reading": "デン",
+      "meaning": "electricity"
+    },
+    "勉": {
+      "reading": "つと",
+      "meaning": "exertion, endeavour, encourage"
+    },
+    "学": {
+      "reading": "まな",
+      "meaning": "study, learning, science"
+    },
+    "東": {
+      "reading": "ひがし",
+      "meaning": "east"
+    },
+    "同": {
+      "reading": "おな",
+      "meaning": "same, agree, equal"
+    },
+    "談": {
+      "reading": "ダン",
+      "meaning": "discuss, talk"
+    },
+    "画": {
+      "reading": "えが",
+      "meaning": "brush-stroke, picture"
+    },
+    "大": {
+      "reading": "おお",
+      "meaning": "large, big"
+    },
+    "相": {
+      "reading": "あい",
+      "meaning": "inter-, mutual, together"
+    },
+    "僚": {
+      "reading": "リョウ",
+      "meaning": "colleague, official, companion"
+    },
+    "健": {
+      "reading": "すこ",
+      "meaning": "healthy, health, strength"
+    },
+    "館": {
+      "reading": "やかた",
+      "meaning": "building, mansion, large building"
+    },
+    "計": {
+      "reading": "はか",
+      "meaning": "plot, plan, scheme"
+    },
+    "未": {
+      "reading": "いま",
+      "meaning": "un-, not yet, hitherto"
+    },
+    "月": {
+      "reading": "つき",
+      "meaning": "month, moon"
+    },
+    "不": {
+      "reading": "フ",
+      "meaning": "negative, non-, bad"
+    },
+    "作": {
+      "reading": "つく",
+      "meaning": "make, production, prepare"
+    },
+    "命": {
+      "reading": "いのち",
+      "meaning": "fate, command, decree"
+    },
+    "音": {
+      "reading": "おと",
+      "meaning": "sound, noise"
+    },
+    "年": {
+      "reading": "とし",
+      "meaning": "year, counter for years"
+    },
+    "康": {
+      "reading": "コウ",
+      "meaning": "ease, peace"
+    },
+    "格": {
+      "reading": "カク",
+      "meaning": "status, rank, capacity"
+    },
+    "懸": {
+      "reading": "か",
+      "meaning": "state of suspension, hang, depend"
+    },
+    "業": {
+      "reading": "わざ",
+      "meaning": "business, vocation, arts"
+    },
+    "場": {
+      "reading": "ば",
+      "meaning": "location, place"
+    },
+    "田": {
+      "reading": "た",
+      "meaning": "rice field, rice paddy"
+    },
+    "曜": {
+      "reading": "ヨウ",
+      "meaning": "weekday"
+    },
+    "所": {
+      "reading": "ところ",
+      "meaning": "place, extent"
+    },
+    "静": {
+      "reading": "しず",
+      "meaning": "quiet"
+    },
+    "開": {
+      "reading": "ひら",
+      "meaning": "open, unfold, unseal"
+    },
+    "動": {
+      "reading": "うご",
+      "meaning": "move, motion, change"
+    },
+    "便": {
+      "reading": "たよ",
+      "meaning": "convenience, facility, excrement"
+    },
+    "発": {
+      "reading": "た",
+      "meaning": "departure, discharge, publish"
+    },
+    "促": {
+      "reading": "うなが",
+      "meaning": "stimulate, urge, press"
+    },
+    "備": {
+      "reading": "そな",
+      "meaning": "equip, provision, preparation"
+    },
+    "模": {
+      "reading": "モ",
+      "meaning": "imitation, copy, mock"
+    },
+    "残": {
+      "reading": "のこ",
+      "meaning": "remainder, leftover, balance"
+    },
+    "弱": {
+      "reading": "よわ",
+      "meaning": "weak, frail"
+    },
+    "性": {
+      "reading": "さが",
+      "meaning": "sex, gender, nature"
+    },
+    "延": {
+      "reading": "の",
+      "meaning": "prolong, stretching"
+    },
+    "脆": {
+      "reading": "もろ",
+      "meaning": "brittle, fragile, easy to beat"
+    },
+    "準": {
+      "reading": "じゅん",
+      "meaning": "semi-, correspond to, proportionate to"
+    },
+    "規": {
+      "reading": "キ",
+      "meaning": "standard, measure"
+    },
+    "数": {
+      "reading": "かず",
+      "meaning": "number, strength, fate"
+    },
+    "輩": {
+      "reading": "ばら",
+      "meaning": "comrade, fellow, people"
+    },
+    "先": {
+      "reading": "さき",
+      "meaning": "before, ahead, previous"
+    },
+    "難": {
+      "reading": "かた",
+      "meaning": "difficult, impossible, trouble"
+    },
+    "定": {
+      "reading": "さだ",
+      "meaning": "determine, fix, establish"
+    },
+    "特": {
+      "reading": "トク",
+      "meaning": "special"
+    },
+    "移": {
+      "reading": "うつ",
+      "meaning": "shift, move, change"
+    },
+    "解": {
+      "reading": "と",
+      "meaning": "unravel, notes, key"
+    },
+    "因": {
+      "reading": "よ",
+      "meaning": "cause, factor, be associated with"
+    },
+    "原": {
+      "reading": "はら",
+      "meaning": "meadow, original, primitive"
+    },
+    "失": {
+      "reading": "うしな",
+      "meaning": "lose, error, fault"
+    },
+    "戦": {
+      "reading": "いくさ",
+      "meaning": "war, battle, match"
+    },
+    "式": {
+      "reading": "シキ",
+      "meaning": "style, ceremony, rite"
+    },
+    "挑": {
+      "reading": "いど",
+      "meaning": "challenge, contend for, make love to"
+    },
+    "敗": {
+      "reading": "やぶ",
+      "meaning": "failure, defeat, reversal"
+    },
+    "条": {
+      "reading": "えだ",
+      "meaning": "article, clause, counter for articles, clauses, paragraphs, etc."
+    },
+    "約": {
+      "reading": "つづ",
+      "meaning": "promise, approximately, shrink"
+    },
+    "契": {
+      "reading": "ちぎ",
+      "meaning": "pledge, promise, vow"
+    },
+    "項": {
+      "reading": "うなじ",
+      "meaning": "paragraph, nape of neck, clause"
+    },
+    "正": {
+      "reading": "ただ",
+      "meaning": "correct, justice, righteous"
+    },
+    "精": {
+      "reading": "しら",
+      "meaning": "refined, ghost, fairy"
+    },
+    "力": {
+      "reading": "ちから",
+      "meaning": "power, strength, strong"
+    },
+    "査": {
+      "reading": "サ",
+      "meaning": "investigate"
+    },
+    "議": {
+      "reading": "ギ",
+      "meaning": "deliberation, consultation, debate"
+    },
+    "社": {
+      "reading": "やしろ",
+      "meaning": "company, firm, office"
+    },
+    "店": {
+      "reading": "みせ",
+      "meaning": "store, shop"
+    },
+    "明": {
+      "reading": "あ",
+      "meaning": "bright, light"
+    },
+    "阪": {
+      "reading": "さか",
+      "meaning": "heights, slope"
+    },
+    "努": {
+      "reading": "つと",
+      "meaning": "toil, diligent, as much as possible"
+    },
+    "転": {
+      "reading": "ころ",
+      "meaning": "revolve, turn around, change"
+    },
+    "支": {
+      "reading": "ささ",
+      "meaning": "branch, support, sustain"
+    },
+    "値": {
+      "reading": "ね",
+      "meaning": "price, cost, value"
+    },
+    "雑": {
+      "reading": "まじ",
+      "meaning": "miscellaneous"
+    },
+    "複": {
+      "reading": "フク",
+      "meaning": "duplicate, double, compound"
+    },
+    "段": {
+      "reading": "ダン",
+      "meaning": "grade, steps, stairs"
+    },
+    "勤": {
+      "reading": "つと",
+      "meaning": "diligence, become employed, serve"
+    },
+    "郵": {
+      "reading": "ユウ",
+      "meaning": "mail, stagecoach stop"
+    },
+    "験": {
+      "reading": "あかし",
+      "meaning": "verification, effect, testing"
+    },
+    "局": {
+      "reading": "つぼね",
+      "meaning": "bureau, board, office"
+    },
+    "冷": {
+      "reading": "つめ",
+      "meaning": "cool, cold (beer, person), chill"
+    },
+    "経": {
+      "reading": "へ",
+      "meaning": "sutra, longitude, pass thru"
+    },
+    "進": {
+      "reading": "すす",
+      "meaning": "advance, proceed, progress"
+    },
+    "人": {
+      "reading": "ひと",
+      "meaning": "person"
+    },
+    "技": {
+      "reading": "わざ",
+      "meaning": "skill, art, craft"
+    },
+    "対": {
+      "reading": "あいて",
+      "meaning": "vis-a-vis, opposite, even"
+    },
+    "変": {
+      "reading": "か",
+      "meaning": "unusual, change, strange"
+    },
+    "個": {
+      "reading": "コ",
+      "meaning": "individual, counter for articles"
+    },
+    "術": {
+      "reading": "すべ",
+      "meaning": "art, technique, skill"
+    },
+    "慎": {
+      "reading": "つつし",
+      "meaning": "humility, be careful, discreet"
+    },
+    "化": {
+      "reading": "ば",
+      "meaning": "change, take the form of, influence"
+    },
+    "応": {
+      "reading": "あた",
+      "meaning": "apply, answer, yes"
+    },
+    "重": {
+      "reading": "え",
+      "meaning": "heavy, important, esteem"
+    },
+    "面": {
+      "reading": "おも",
+      "meaning": "mask, face, features"
+    },
+    "説": {
+      "reading": "と",
+      "meaning": "opinion, theory, explanation"
+    },
+    "門": {
+      "reading": "かど",
+      "meaning": "gate, counter for cannons"
+    },
+    "論": {
+      "reading": "あげつら",
+      "meaning": "argument, discourse"
+    },
+    "専": {
+      "reading": "もっぱ",
+      "meaning": "specialty, exclusive, mainly"
+    },
+    "素": {
+      "reading": "もと",
+      "meaning": "elementary, principle, naked"
+    },
+    "用": {
+      "reading": "もち",
+      "meaning": "utilize, business, service"
+    },
+    "目": {
+      "reading": "め",
+      "meaning": "eye, class, look"
+    },
+    "理": {
+      "reading": "ことわり",
+      "meaning": "logic, arrangement, reason"
+    },
+    "地": {
+      "reading": "チ",
+      "meaning": "ground, earth"
+    },
+    "料": {
+      "reading": "リョウ",
+      "meaning": "fee, materials"
+    },
+    "天": {
+      "reading": "あまつ",
+      "meaning": "heavens, sky, imperial"
+    },
+    "足": {
+      "reading": "あし",
+      "meaning": "leg, foot, be sufficient"
+    },
+    "口": {
+      "reading": "くち",
+      "meaning": "mouth"
+    },
+    "屈": {
+      "reading": "かが",
+      "meaning": "yield, bend, flinch"
+    },
+    "退": {
+      "reading": "しりぞ",
+      "meaning": "retreat, withdraw, retire"
+    },
+    "資": {
+      "reading": "シ",
+      "meaning": "assets, resources, capital"
+    },
+    "剣": {
+      "reading": "つるぎ",
+      "meaning": "sabre, sword, blade"
+    },
+    "景": {
+      "reading": "ケイ",
+      "meaning": "scenery, view"
+    },
+    "直": {
+      "reading": "ただ",
+      "meaning": "straightaway, honesty, frankness"
+    },
+    "番": {
+      "reading": "つが",
+      "meaning": "turn, number in a series"
+    },
+    "璧": {
+      "reading": "たま",
+      "meaning": "sphere, ball"
+    },
+    "微": {
+      "reading": "かす",
+      "meaning": "delicate, minuteness, insignificance"
+    },
+    "妙": {
+      "reading": "たえ",
+      "meaning": "exquisite, strange, queer"
+    },
+    "映": {
+      "reading": "うつ",
+      "meaning": "reflect, reflection, projection"
+    },
+    "完": {
+      "reading": "カン",
+      "meaning": "perfect, completion, end"
+    },
+    "鮮": {
+      "reading": "あざ",
+      "meaning": "fresh, vivid, clear"
+    },
+    "貴": {
+      "reading": "たっと",
+      "meaning": "precious, value, prize"
+    },
+    "投": {
+      "reading": "な",
+      "meaning": "throw, discard, abandon"
+    },
+    "神": {
+      "reading": "かみ",
+      "meaning": "gods, mind, soul"
+    },
+    "夕": {
+      "reading": "ゆう",
+      "meaning": "evening"
+    },
+    "写": {
+      "reading": "うつ",
+      "meaning": "copy, be photographed, describe"
+    },
+    "塩": {
+      "reading": "しお",
+      "meaning": "salt"
+    },
+    "暮": {
+      "reading": "く",
+      "meaning": "evening, twilight, season's end"
+    },
+    "稿": {
+      "reading": "わら",
+      "meaning": "draft, copy, manuscript"
+    },
+    "万": {
+      "reading": "よろず",
+      "meaning": "ten thousand, 10,000"
+    },
+    "決": {
+      "reading": "き",
+      "meaning": "decide, fix, agree upon"
+    },
+    "黒": {
+      "reading": "くろ",
+      "meaning": "black"
+    },
+    "窓": {
+      "reading": "まど",
+      "meaning": "window, pane"
+    },
+    "歴": {
+      "reading": "レキ",
+      "meaning": "curriculum, continuation, passage of time"
+    },
+    "壇": {
+      "reading": "ダン",
+      "meaning": "podium, stage, rostrum"
+    },
+    "史": {
+      "reading": "シ",
+      "meaning": "history, chronicle"
+    },
+    "惑": {
+      "reading": "まど",
+      "meaning": "beguile, delusion, perplexity"
+    },
+    "炎": {
+      "reading": "ほのお",
+      "meaning": "inflammation, flame, blaze"
+    },
+    "迷": {
+      "reading": "まよ",
+      "meaning": "astray, be perplexed, in doubt"
+    },
+    "幹": {
+      "reading": "みき",
+      "meaning": "tree trunk, main part, talent"
+    },
+    "当": {
+      "reading": "あ",
+      "meaning": "hit, right, appropriate"
+    },
+    "土": {
+      "reading": "つち",
+      "meaning": "soil, earth, ground"
+    },
+    "恥": {
+      "reading": "は",
+      "meaning": "shame, dishonor"
+    },
+    "伝": {
+      "reading": "つた",
+      "meaning": "transmit, go along, walk along"
+    },
+    "勇": {
+      "reading": "いさ",
+      "meaning": "courage, cheer up, be in high spirits"
+    },
+    "末": {
+      "reading": "すえ",
+      "meaning": "end, close, tip"
+    },
+    "武": {
+      "reading": "たけ",
+      "meaning": "warrior, military, chivalry"
+    },
+    "識": {
+      "reading": "し",
+      "meaning": "discriminating, know, write"
+    },
+    "常": {
+      "reading": "つね",
+      "meaning": "usual, ordinary, normal"
+    },
+    "豆": {
+      "reading": "まめ",
+      "meaning": "beans, pea, midget"
+    },
+    "遠": {
+      "reading": "とお",
+      "meaning": "distant, far"
+    },
+    "知": {
+      "reading": "し",
+      "meaning": "know, wisdom"
+    },
+    "週": {
+      "reading": "シュウ",
+      "meaning": "week"
+    },
+    "就": {
+      "reading": "つ",
+      "meaning": "concerning, settle, take position"
+    },
+    "囲": {
+      "reading": "かこ",
+      "meaning": "surround, besiege, store"
+    },
+    "全": {
+      "reading": "まった",
+      "meaning": "whole, entire, all"
+    },
+    "範": {
+      "reading": "ハン",
+      "meaning": "pattern, example, model"
+    },
+    "留": {
+      "reading": "と",
+      "meaning": "detain, fasten, halt"
+    },
+    "落": {
+      "reading": "お",
+      "meaning": "fall, drop, come down"
+    },
+    "征": {
+      "reading": "セイ",
+      "meaning": "subjugate, attack the rebellious, collect taxes"
+    },
+    "婚": {
+      "reading": "コン",
+      "meaning": "marriage"
+    },
+    "立": {
+      "reading": "た",
+      "meaning": "stand up, rise, set up"
+    },
+    "第": {
+      "reading": "ダイ",
+      "meaning": "No., residence"
+    },
+    "半": {
+      "reading": "なか",
+      "meaning": "half, middle, odd number"
+    },
+    "労": {
+      "reading": "ろう",
+      "meaning": "labor, thank for, reward for"
+    },
+    "信": {
+      "reading": "シン",
+      "meaning": "faith, truth, fidelity"
+    },
+    "途": {
+      "reading": "みち",
+      "meaning": "route, way, road"
+    },
+    "端": {
+      "reading": "はし",
+      "meaning": "edge, origin, end"
+    },
+    "苦": {
+      "reading": "くる",
+      "meaning": "suffering, trial, worry"
+    },
+    "号": {
+      "reading": "さけ",
+      "meaning": "nickname, number, item"
+    },
+    "義": {
+      "reading": "ギ",
+      "meaning": "righteousness, justice, morality"
+    },
+    "小": {
+      "reading": "ちい",
+      "meaning": "little, small"
+    },
+    "講": {
+      "reading": "コウ",
+      "meaning": "lecture, club, association"
+    },
+    "晴": {
+      "reading": "は",
+      "meaning": "clear up"
+    },
+    "判": {
+      "reading": "わか",
+      "meaning": "judgement, judgment, signature"
+    }
+  }
+}

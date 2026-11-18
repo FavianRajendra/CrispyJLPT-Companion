@@ -20,7 +20,7 @@ import {
 export interface MasteryViewProps {
   verbs: Verb[];
   profile: UserProfile;
-  progressMap: Map<number, VerbProgress>;
+  progressMap?: Map<number, VerbProgress> | Record<number, VerbProgress>;
   onUpdateProfile: (updated: UserProfile) => void | Promise<void>;
 }
 
@@ -100,6 +100,27 @@ const INDUSTRY_TRACKS: Array<{ id: IndustryTrack; label: string }> = [
   { id: "manufacturing", label: "Manufacturing" },
 ];
 
+function safeGetProgress(
+  map: Map<number, VerbProgress> | Record<number, VerbProgress> | undefined,
+  verbId: number
+): VerbProgress | undefined {
+  if (!map) return undefined;
+  if (typeof (map as Map<number, VerbProgress>).get === "function") {
+    return (map as Map<number, VerbProgress>).get(verbId);
+  }
+  return (map as Record<number, VerbProgress>)[verbId];
+}
+
+function safeProgressValues(
+  map: Map<number, VerbProgress> | Record<number, VerbProgress> | undefined
+): VerbProgress[] {
+  if (!map) return [];
+  if (typeof (map as Map<number, VerbProgress>).values === "function") {
+    return Array.from((map as Map<number, VerbProgress>).values());
+  }
+  return Object.values(map);
+}
+
 function formatDateKey(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -132,7 +153,7 @@ function safeIndustriesArray(raw: unknown): IndustryTrack[] {
 }
 
 export const MasteryView: React.FC<MasteryViewProps> = ({
-  verbs,
+  verbs = [],
   profile,
   progressMap,
   onUpdateProfile,
@@ -168,7 +189,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
       );
       setCheckins(rows || []);
 
-      // Also persist latest streak snapshot to localStorage for Android Widget bridge
       const checkinSet = new Set((rows || []).map((r) => r.date_key));
       let streak = 0;
       const cursor = new Date();
@@ -188,7 +208,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
             streakCount: streak,
             checkedInToday: Boolean(todayRow),
             todayReviews: todayRow?.reviews_count ?? 0,
-            dailyGoal: profile.daily_goal || 15,
+            dailyGoal: profile?.daily_goal || 15,
             fishEmote: getFishMascotForStreak(streak).emote,
           })
         );
@@ -196,7 +216,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
         // ignore storage errors
       }
 
-      // Load quiz accuracy & IDK flag metrics for passability algorithm
       let totalAnswered = 0;
       let correctCount = 0;
       let idkCount = 0;
@@ -235,7 +254,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
     } catch (err) {
       console.warn("[MasteryView] Failed to load streak/quiz stats:", err);
     }
-  }, [todayKey, profile.daily_goal]);
+  }, [todayKey, profile?.daily_goal]);
 
   useEffect(() => {
     loadStreakAndQuizTelemetry();
@@ -261,7 +280,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
     }
   };
 
-  // Compute current streak & last 7 days calendar strip
   const { currentStreak, checkedInToday, last7Days, todayReviews } = useMemo(() => {
     const map = new Map<string, DailyCheckinRow>();
     for (const r of checkins) {
@@ -308,10 +326,9 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
 
   const fishMascot = getFishMascotForStreak(currentStreak);
 
-  // Dual Readiness & JLPT Passability Estimator Algorithm
   const analytics = useMemo(() => {
-    const targetLvl = profile.target_jlpt || "N5";
-    const activeIndustries = safeIndustriesArray(profile.target_industries);
+    const targetLvl = profile?.target_jlpt || "N5";
+    const activeIndustries = safeIndustriesArray(profile?.target_industries);
 
     const targetVerbs = verbs.filter((v) => v.jlpt_level === targetLvl);
     const industryVerbs =
@@ -327,7 +344,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
       if (subset.length === 0) return 0;
       let sum = 0;
       for (const v of subset) {
-        const p = progressMap.get(v.id);
+        const p = safeGetProgress(progressMap, v.id);
         if (p) {
           sum += (p.reading_score + p.meaning_score) / 2;
         }
@@ -341,19 +358,16 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
     const jlptReadinessPct = Math.round(corpusRetention * 100);
     const industryReadinessPct = Math.round(industryRetention * 100);
 
-    // Honest Quiz Accuracy (IDK flags count as 0% rather than random 25% gacha luck)
     const honestQuizAccuracy =
       quizStats.totalAnswered > 0
         ? quizStats.correctCount / quizStats.totalAnswered
         : corpusRetention;
 
-    // Penalty factor for unreviewed Flagged IDK items
     const idkPenalty = Math.min(
       0.15,
       (quizStats.idkCount + quizStats.flaggedGrammarCount) * 0.01
     );
 
-    // Weighted Passability Signal (50% FSRS Corpus Retention, 35% Honest Quiz Accuracy, 15% Streak Consistency)
     const streakFactor = Math.min(1, currentStreak / 14);
     const compositeSkill = Math.max(
       0,
@@ -366,13 +380,11 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
       )
     );
 
-    // Scale composite skill to JLPT 0..180 point scale
     const estimatedScore = Math.round(compositeSkill * 180);
     const officialThreshold =
       OFFICIAL_JLPT_GRADES.find((g) => g.level === targetLvl) ||
       OFFICIAL_JLPT_GRADES[0];
 
-    // Sigmoid probability curve centered on the official passing score
     const scoreMargin = estimatedScore - officialThreshold.passScore;
     const rawPassProb = 1 / (1 + Math.exp(-scoreMargin / 12));
     const passProbabilityPct = Math.max(
@@ -385,7 +397,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
     return {
       targetLvl,
       targetCount: targetVerbs.length,
-      reviewedCount: Array.from(progressMap.values()).filter(
+      reviewedCount: safeProgressValues(progressMap).filter(
         (p) => p.repetitions > 0
       ).length,
       jlptReadinessPct,
@@ -399,6 +411,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
   }, [verbs, profile, progressMap, quizStats, currentStreak]);
 
   const toggleProfileIndustry = (track: IndustryTrack) => {
+    if (!profile) return;
     const current = safeIndustriesArray(profile.target_industries);
     const updated = current.includes(track)
       ? current.filter((t) => t !== track)
@@ -411,9 +424,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
 
   return (
     <div className="max-w-5xl mx-auto space-y-5 pb-24 md:pb-10">
-      {/* =================================================================== */}
-      {/* 1. DUOLINGO-STYLE FISH DAILY CHECK-IN & STREAK TRACKER              */}
-      {/* =================================================================== */}
       <div className="p-5 sm:p-6 rounded-3xl glass-card border border-accent/30 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
@@ -431,7 +441,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
                 </span>
               </div>
               <p className="text-xs text-primary-muted mt-0.5">
-                Today's activity: {todayReviews} / {profile.daily_goal || 15}{" "}
+                Today's activity: {todayReviews} / {profile?.daily_goal || 15}{" "}
                 verbs • Keep your fish swimming daily!
               </p>
             </div>
@@ -454,7 +464,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
           </button>
         </div>
 
-        {/* 7-Day Fish Streak Strip */}
         <div className="grid grid-cols-7 gap-2 pt-1">
           {last7Days.map((day) => (
             <div
@@ -481,19 +490,13 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
         </div>
       </div>
 
-      {/* =================================================================== */}
-      {/* 2. JLPT PASSABILITY ESTIMATOR & DUAL READINESS METERS               */}
-      {/* =================================================================== */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Passability Estimator Gauge Card */}
         <div className="lg:col-span-2 p-5 sm:p-6 rounded-3xl glass-card border border-border-glass space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 className="text-base font-bold text-primary flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 text-accent" />
-                <span>
-                  JLPT {analytics.targetLvl} Passability Estimator
-                </span>
+                <span>JLPT {analytics.targetLvl} Passability Estimator</span>
               </h3>
               <p className="text-xs text-primary-muted">
                 Predicted from FSRS retention, honest quiz accuracy (excluding
@@ -522,7 +525,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
             </span>
           </div>
 
-          {/* Score vs Official Passing Threshold Bar */}
           <div className="p-4 rounded-2xl glass-panel border border-border-glass space-y-3">
             <div className="flex items-end justify-between">
               <div>
@@ -555,7 +557,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
               </div>
             </div>
 
-            {/* Visual Progress Bar with Official Pass Line Marker */}
             <div className="relative h-4 rounded-full bg-surface-hover overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-500 ${
@@ -568,7 +569,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
                   )}%`,
                 }}
               />
-              {/* Official Pass Threshold Tick */}
               <div
                 title={`Official ${analytics.targetLvl} Pass Mark: ${analytics.officialThreshold.passScore}/180`}
                 className="absolute top-0 bottom-0 w-0.5 bg-amber-300 z-10"
@@ -598,7 +598,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
             </div>
           </div>
 
-          {/* Side-by-Side JLPT vs Career Track Readiness */}
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3.5 rounded-2xl glass-panel border border-border-glass">
               <div className="text-xs text-primary-muted">
@@ -626,7 +625,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
           </div>
         </div>
 
-        {/* Target Calibration Controls */}
         <div className="p-5 rounded-3xl glass-card border border-border-glass space-y-4">
           <h3 className="text-sm font-bold text-primary flex items-center gap-2">
             <Target className="w-4 h-4 text-accent" />
@@ -643,10 +641,10 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
                   key={lvl}
                   type="button"
                   onClick={() =>
-                    onUpdateProfile({ ...profile, target_jlpt: lvl })
+                    profile && onUpdateProfile({ ...profile, target_jlpt: lvl })
                   }
                   className={`py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    profile.target_jlpt === lvl
+                    profile?.target_jlpt === lvl
                       ? "bg-accent text-white"
                       : "text-primary-muted hover:text-primary"
                   }`}
@@ -659,15 +657,16 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
 
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-primary-muted">
-              Daily Verb Goal: {profile.daily_goal || 15} verbs/day
+              Daily Verb Goal: {profile?.daily_goal || 15} verbs/day
             </label>
             <input
               type="range"
               min={5}
               max={60}
               step={5}
-              value={profile.daily_goal || 15}
+              value={profile?.daily_goal || 15}
               onChange={(e) =>
+                profile &&
                 onUpdateProfile({
                   ...profile,
                   daily_goal: Number(e.target.value),
@@ -684,7 +683,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
             <div className="flex flex-wrap gap-1.5">
               {INDUSTRY_TRACKS.map((tr) => {
                 const active = safeIndustriesArray(
-                  profile.target_industries
+                  profile?.target_industries
                 ).includes(tr.id);
                 return (
                   <button
@@ -706,9 +705,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
         </div>
       </div>
 
-      {/* =================================================================== */}
-      {/* 3. OFFICIAL JLPT PASSING GRADES REFERENCE TABLE (N5 - N1)           */}
-      {/* =================================================================== */}
       <div className="p-5 rounded-3xl glass-card border border-border-glass space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold text-primary flex items-center gap-2">
@@ -733,11 +729,12 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
             </thead>
             <tbody className="divide-y divide-border-glass">
               {OFFICIAL_JLPT_GRADES.map((row) => {
-                const isTarget = row.level === profile.target_jlpt;
+                const isTarget = row.level === profile?.target_jlpt;
                 return (
                   <tr
                     key={row.level}
                     onClick={() =>
+                      profile &&
                       onUpdateProfile({ ...profile, target_jlpt: row.level })
                     }
                     className={`cursor-pointer transition-colors ${

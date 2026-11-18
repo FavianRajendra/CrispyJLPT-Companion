@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Play,
   Pause,
@@ -55,21 +55,14 @@ function uniformShuffle<T>(items: T[]): T[] {
   return arr;
 }
 
-/**
- * Efraimidis-Spirakis weighted stochastic sampling without replacement.
- * Produces a fresh order every run while heavily favoring higher-priority verbs
- * (due FSRS intervals, low mastery scores, target JLPT band, selected tracks).
- */
 function weightedStochasticOrder(
   items: Verb[],
   profile: UserProfile,
   progressMap: Map<number, VerbProgress>
 ): Verb[] {
   const scored = items.map((verb) => {
-    const prog = progressMap.get(verb.id);
+    const prog = progressMap?.get?.(verb.id);
     const rawPriority = computeVerbPriority(verb, profile, prog);
-    // Amplify contrast so high-priority items reliably cluster near the front
-    // while still retaining organic session-to-session variation.
     const weight = Math.max(0.08, Math.pow(Math.max(0.1, rawPriority), 2.2));
     const u = Math.max(1e-6, Math.random());
     const stochasticKey = Math.pow(u, 1 / weight);
@@ -98,7 +91,6 @@ export const PresentView: React.FC<PresentViewProps> = ({
   selectedTracks: externalTracks,
   setSelectedTracks: setExternalTracks,
 }) => {
-  // Local fallback filter states if parent didn't pass controlled props
   const [internalLevels, setInternalLevels] = useState<JlptLevel[]>([
     profile.target_jlpt || "N5",
   ]);
@@ -109,7 +101,6 @@ export const PresentView: React.FC<PresentViewProps> = ({
   const activeTracks = externalTracks ?? internalTracks;
   const setActiveTracks = setExternalTracks ?? setInternalTracks;
 
-  // Presentation & Auto-Slideshow Controls
   const [sortMode, setSortMode] = useState<SortOrderMode>("priority");
   const [shuffleNonce, setShuffleNonce] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -121,7 +112,9 @@ export const PresentView: React.FC<PresentViewProps> = ({
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [countdownMs, setCountdownMs] = useState<number>(4000);
 
-  // Filter verbs by selected JLPT levels + optional multi-select industry tracks
+  // Deduplication guard so StrictMode or re-renders never trigger speech twice for the same reveal
+  const lastSpokenKeyRef = useRef<string>("");
+
   const filteredPool = useMemo(() => {
     const levelsToUse =
       activeLevels.length > 0 ? activeLevels : ([profile.target_jlpt] as JlptLevel[]);
@@ -140,7 +133,6 @@ export const PresentView: React.FC<PresentViewProps> = ({
     return matches.length > 0 ? matches : verbs;
   }, [verbs, activeLevels, activeTracks, profile.target_jlpt]);
 
-  // Build ordered study queue (Priority = weighted stochastic; Random = uniform; Sequential = corpus ID)
   const studyQueue = useMemo(() => {
     if (filteredPool.length === 0) return [];
     if (sortMode === "sequential") {
@@ -157,9 +149,23 @@ export const PresentView: React.FC<PresentViewProps> = ({
     setCurrentIndex(0);
     setIsRevealed(false);
     setCountdownMs(cardGapSec * 1000);
+    lastSpokenKeyRef.current = "";
   }, [studyQueue, cardGapSec]);
 
   const currentVerb = studyQueue[currentIndex % Math.max(1, studyQueue.length)];
+
+  // Trigger auto-audio cleanly in a single effect whenever a card flips to revealed
+  useEffect(() => {
+    if (!isRevealed || !autoSpeak || !currentVerb) return;
+    const key = `${currentIndex}:${currentVerb.id}`;
+    if (lastSpokenKeyRef.current === key) return;
+    lastSpokenKeyRef.current = key;
+
+    speakJapanese(
+      currentVerb.furigana_reading || currentVerb.kanji_form,
+      speechRate
+    );
+  }, [isRevealed, autoSpeak, currentVerb, currentIndex, speechRate]);
 
   const toggleLevel = (lvl: JlptLevel) => {
     setActiveLevels((prev) => {
@@ -177,6 +183,7 @@ export const PresentView: React.FC<PresentViewProps> = ({
   };
 
   const goNext = useCallback(() => {
+    lastSpokenKeyRef.current = "";
     setIsRevealed(false);
     setCountdownMs(cardGapSec * 1000);
     setCurrentIndex((prev) => {
@@ -185,7 +192,6 @@ export const PresentView: React.FC<PresentViewProps> = ({
           setIsPlaying(false);
           return prev;
         }
-        // Automatically reshuffle priority/random deck when looping around
         if (sortMode !== "sequential") {
           setShuffleNonce((n) => n + 1);
         }
@@ -196,6 +202,7 @@ export const PresentView: React.FC<PresentViewProps> = ({
   }, [cardGapSec, studyQueue.length, loopDeck, sortMode]);
 
   const goPrev = useCallback(() => {
+    lastSpokenKeyRef.current = "";
     setIsRevealed(false);
     setCountdownMs(cardGapSec * 1000);
     setCurrentIndex((prev) =>
@@ -203,7 +210,6 @@ export const PresentView: React.FC<PresentViewProps> = ({
     );
   }, [cardGapSec, studyQueue.length]);
 
-  // Increment daily check-in activity counter whenever user grades a verb
   const recordDailyReviewActivity = async () => {
     try {
       const db = await getDatabase();
@@ -233,7 +239,7 @@ export const PresentView: React.FC<PresentViewProps> = ({
 
   const handleGradeVerb = async (grade: 1 | 2 | 3) => {
     if (!currentVerb) return;
-    const existing = progressMap.get(currentVerb.id);
+    const existing = progressMap?.get?.(currentVerb.id);
     const updatedReading = updateVerbMastery(
       existing,
       currentVerb.id,
@@ -251,7 +257,7 @@ export const PresentView: React.FC<PresentViewProps> = ({
     goNext();
   };
 
-  // Auto-Presentation Timer Loop
+  // Pure Auto-Presentation Timer Loop (no side effects inside state updaters)
   useEffect(() => {
     if (!isPlaying || !currentVerb) return;
 
@@ -262,14 +268,8 @@ export const PresentView: React.FC<PresentViewProps> = ({
     const timer = window.setInterval(() => {
       setCountdownMs((prev) => {
         const next = prev - tickMs;
-        if (next <= revealAtMs && !isRevealed) {
+        if (next <= revealAtMs) {
           setIsRevealed(true);
-          if (autoSpeak) {
-            speakJapanese(
-              currentVerb.furigana_reading || currentVerb.kanji_form,
-              speechRate
-            );
-          }
         }
         if (next <= 0) {
           goNext();
@@ -280,22 +280,15 @@ export const PresentView: React.FC<PresentViewProps> = ({
     }, tickMs);
 
     return () => window.clearInterval(timer);
-  }, [
-    isPlaying,
-    currentVerb,
-    cardGapSec,
-    isRevealed,
-    autoSpeak,
-    speechRate,
-    goNext,
-  ]);
+  }, [isPlaying, currentVerb, cardGapSec, goNext]);
 
   // Keyboard shortcuts: Space (reveal/next), ArrowRight, ArrowLeft, R (speak), 1/2/3 (triage)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (
         e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLButtonElement
       ) {
         return;
       }
@@ -303,12 +296,6 @@ export const PresentView: React.FC<PresentViewProps> = ({
         e.preventDefault();
         if (!isRevealed) {
           setIsRevealed(true);
-          if (currentVerb && autoSpeak) {
-            speakJapanese(
-              currentVerb.furigana_reading || currentVerb.kanji_form,
-              speechRate
-            );
-          }
         } else {
           goNext();
         }
@@ -341,7 +328,7 @@ export const PresentView: React.FC<PresentViewProps> = ({
   const circleCircumference = 2 * Math.PI * circleRadius;
   const strokeDashoffset = circleCircumference * (1 - progressRatio);
 
-  const currentProg = currentVerb ? progressMap.get(currentVerb.id) : undefined;
+  const currentProg = currentVerb ? progressMap?.get?.(currentVerb.id) : undefined;
   const currentMasteryPct = currentProg
     ? Math.round(
         ((currentProg.reading_score + currentProg.meaning_score) / 2) * 100
@@ -491,16 +478,7 @@ export const PresentView: React.FC<PresentViewProps> = ({
 
           {/* Fixed-Height Kanji + Furigana + Meaning Stage (CLS < 0.1) */}
           <div
-            onClick={() => {
-              const nextState = !isRevealed;
-              setIsRevealed(nextState);
-              if (nextState && autoSpeak) {
-                speakJapanese(
-                  currentVerb.furigana_reading || currentVerb.kanji_form,
-                  speechRate
-                );
-              }
-            }}
+            onClick={() => setIsRevealed((prev) => !prev)}
             className="min-h-[210px] flex flex-col items-center justify-center text-center cursor-pointer select-none px-2"
           >
             {/* Furigana Slot */}
@@ -575,7 +553,6 @@ export const PresentView: React.FC<PresentViewProps> = ({
             <SkipBack className="w-4 h-4" />
           </button>
 
-          {/* Play/Pause with Circular Countdown Ring */}
           <button
             type="button"
             onClick={() => setIsPlaying((p) => !p)}
