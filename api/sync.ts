@@ -1,7 +1,19 @@
 import { neon } from "@neondatabase/serverless";
 
+export interface KanjiNoteSyncRow {
+  id: string;
+  kanji: string;
+  furigana: string;
+  meaning: string;
+  source_note?: string;
+  jlpt_level?: string;
+  learned_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+}
+
 export interface SyncPayload {
-  userId: string;
+  userId?: string;
   token?: string;
   profile?: {
     current_jlpt: string;
@@ -22,7 +34,9 @@ export interface SyncPayload {
     next_review_at: string | null;
     updated_at: string;
   }>;
+  kanji_notes?: KanjiNoteSyncRow[];
   lastSyncedAt?: string | null;
+  last_sync_at?: string | null;
 }
 
 /**
@@ -67,18 +81,18 @@ export default async function handler(req: Request): Promise<Response> {
       // Optional JWT signature verification hook
     }
     const body: SyncPayload = await req.json();
+    const userId = body.userId;
 
-    if (!body.userId) {
+    if (!userId) {
       return new Response(JSON.stringify({ error: "userId is required" }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
     }
 
-    // Verify token if present (or ensure basic caller signature)
-    const userId = body.userId;
     const sql = neon(databaseUrl);
     const nowIso = new Date().toISOString();
+    const effectiveLastSync = body.lastSyncedAt || body.last_sync_at || null;
 
     // 1. Sync User Profile if sent
     if (body.profile) {
@@ -130,14 +144,40 @@ export default async function handler(req: Request): Promise<Response> {
       }
     }
 
-    // 3. Fetch server changes since client's lastSyncedAt
+    // 3. Batch-upsert client dirty Kanji Note Widget entries
+    if (Array.isArray(body.kanji_notes) && body.kanji_notes.length > 0) {
+      for (const note of body.kanji_notes) {
+        await sql`
+          INSERT INTO learned_kanji_notes (
+            id, user_id, kanji, furigana, meaning, source_note, jlpt_level,
+            learned_at, updated_at, deleted_at
+          ) VALUES (
+            ${note.id}, ${userId}, ${note.kanji}, ${note.furigana}, ${note.meaning},
+            ${note.source_note || ""}, ${note.jlpt_level || ""},
+            ${note.learned_at || nowIso}, ${note.updated_at || nowIso}, ${note.deleted_at || null}
+          )
+          ON CONFLICT (id) DO UPDATE SET
+            kanji = EXCLUDED.kanji,
+            furigana = EXCLUDED.furigana,
+            meaning = EXCLUDED.meaning,
+            source_note = EXCLUDED.source_note,
+            jlpt_level = EXCLUDED.jlpt_level,
+            learned_at = EXCLUDED.learned_at,
+            updated_at = EXCLUDED.updated_at,
+            deleted_at = EXCLUDED.deleted_at
+          WHERE EXCLUDED.updated_at >= learned_kanji_notes.updated_at;
+        `;
+      }
+    }
+
+    // 4. Fetch server verb progress changes since client's lastSyncedAt
     let pulledProgress: any[] = [];
-    if (body.lastSyncedAt) {
+    if (effectiveLastSync) {
       pulledProgress = await sql`
         SELECT verb_id, reading_score, meaning_score, stability_days,
                repetitions, lapses, last_reviewed_at, next_review_at, updated_at
         FROM user_verb_progress
-        WHERE user_id = ${userId} AND updated_at > ${body.lastSyncedAt};
+        WHERE user_id = ${userId} AND updated_at > ${effectiveLastSync};
       `;
     } else {
       pulledProgress = await sql`
@@ -148,7 +188,27 @@ export default async function handler(req: Request): Promise<Response> {
       `;
     }
 
-    // 4. Fetch latest profile
+    // 5. Fetch server Kanji Note changes since client's lastSyncedAt
+    let pulledKanjiNotes: any[] = [];
+    if (effectiveLastSync) {
+      pulledKanjiNotes = await sql`
+        SELECT id, kanji, furigana, meaning, source_note, jlpt_level,
+               learned_at, updated_at, deleted_at
+        FROM learned_kanji_notes
+        WHERE user_id = ${userId} AND updated_at > ${effectiveLastSync}
+        ORDER BY learned_at DESC;
+      `;
+    } else {
+      pulledKanjiNotes = await sql`
+        SELECT id, kanji, furigana, meaning, source_note, jlpt_level,
+               learned_at, updated_at, deleted_at
+        FROM learned_kanji_notes
+        WHERE user_id = ${userId}
+        ORDER BY learned_at DESC;
+      `;
+    }
+
+    // 6. Fetch latest profile
     const profiles = await sql`
       SELECT id, current_jlpt, target_jlpt, target_industries,
              industry_blend_ratio, daily_goal, updated_at
@@ -161,6 +221,7 @@ export default async function handler(req: Request): Promise<Response> {
         success: true,
         serverTime: nowIso,
         pulledProgress,
+        kanji_notes: pulledKanjiNotes,
         profile: profiles.length > 0 ? profiles[0] : null,
       }),
       {

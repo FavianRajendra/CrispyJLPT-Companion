@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/refs/heads/v2/crates/tauri-cli/schema.json",
-  "productName": "JLPT Verb Kanji Studio",
+  "productName": "CrispyJLPT Companion",
   "version": "1.0.0",
   "identifier": "com.jlpt.verbstudio",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "JLPT Verb Kanji Studio",
+        "title": "CrispyJLPT Companion",
         "width": 1120,
         "height": 800,
         "minWidth": 380,

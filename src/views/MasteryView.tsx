@@ -166,7 +166,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
               </div>
               <div>
                 <h3 className="text-base font-bold text-primary flex items-center gap-2">
-                  <span>Welcome to JLPT Verb & Grammar Studio!</span>
+                  <span>Welcome to CrispyJLPT Companion!</span>
                 </h3>
                 <p className="text-xs text-primary-muted mt-1 leading-relaxed">
                   Your dual-axis FSRS memory engine is calibrated and ready. Complete your first study

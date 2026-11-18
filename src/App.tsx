@@ -16,6 +16,7 @@ import { QuizView } from "./views/QuizView";
 import { GrammarView } from "./views/GrammarView";
 import { DirectoryView } from "./views/DirectoryView";
 import { MasteryView } from "./views/MasteryView";
+import { KanjiNoteWidget } from "./components/KanjiNoteWidget";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { getDatabase, UserProfile, normalizeUserProfile } from "./lib/db";
 import { getDecoratedVerbs, VerbWithProgress } from "./lib/mastery";
@@ -333,6 +334,7 @@ export function App() {
           </div>
         )}
       </AnimatePresence>
+      <KanjiNoteWidget />
     </div>
   );
 }

@@ -1,16 +1,44 @@
 #!/usr/bin/env python3
 """
-JLPT Verb Scraper and Normalizer
-Parses JLPT N5-N1 verbs with Kanji characters, generates character-level ruby segments,
-maps industry career tracks, and outputs both SQLite DB and seed JSON.
+JLPT Verb Scraper & Full-Corpus Normalizer (N5 - N1)
+Fetches JMdict-simplified, JmdictFurigana, and JLPT N5-N1 vocabulary lists,
+extracts all Kanji verbs across N5-N1 + career industry tracks, and builds
+both the native SQLite DB and browser seed JSON.
 """
 
+import csv
+import gzip
+import io
 import json
 import os
+import re
 import sqlite3
-from typing import Dict, List, Any
+import ssl
+import tarfile
+import urllib.request
+from typing import Any, Dict, List, Optional, Tuple
 
-# Curated High-Yield Verbs across N5-N1 and 6 specialized career tracks
+try:
+    import certifi
+    SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    SSL_CONTEXT = ssl._create_unverified_context()
+
+KANJI_RE = re.compile(r"[\u4e00-\u9faf\u3400-\u4dbf]")
+VERB_POS_PREFIXES = ("v1", "v5", "vk", "vs", "vz")
+
+JLPT_CSV_URLS = {
+    "N5": "https://raw.githubusercontent.com/jamsinclair/open-anki-jlpt-decks/main/src/n5.csv",
+    "N4": "https://raw.githubusercontent.com/jamsinclair/open-anki-jlpt-decks/main/src/n4.csv",
+    "N3": "https://raw.githubusercontent.com/jamsinclair/open-anki-jlpt-decks/main/src/n3.csv",
+    "N2": "https://raw.githubusercontent.com/jamsinclair/open-anki-jlpt-decks/main/src/n2.csv",
+    "N1": "https://raw.githubusercontent.com/jamsinclair/open-anki-jlpt-decks/main/src/n1.csv",
+}
+
+JMDICT_RELEASE_API = "https://api.github.com/repos/scriptin/jmdict-simplified/releases/latest"
+FURIGANA_RELEASE_API = "https://api.github.com/repos/Doublevil/JmdictFurigana/releases/latest"
+
+# Curated High-Yield Overrides across N5-N1 and 6 specialized career tracks
 CURATED_VERBS: List[Dict[str, Any]] = [
     # ==================== JLPT N5 ====================
     {
@@ -377,7 +405,217 @@ CURATED_VERBS: List[Dict[str, Any]] = [
     }
 ]
 
-def generate_sqlite_db(verbs: List[Dict[str, Any]], db_path: str):
+FIELD_TO_INDUSTRY = {
+    "comp": "it",
+    "telec": "it",
+    "finc": "finance",
+    "econ": "finance",
+    "bus": "finance",
+    "food": "fnb",
+    "med": "healthcare",
+    "anat": "healthcare",
+    "pharm": "healthcare",
+    "engr": "manufacturing",
+    "mech": "manufacturing",
+    "elec": "manufacturing",
+    "arch": "manufacturing",
+}
+
+KEYWORD_TO_INDUSTRY = {
+    "it": ("software", "program", "database", "server", "network", "encrypt", "compile", "debug", "algorithm", "system", "data"),
+    "finance": ("invest", "loan", "bank", "tax", "audit", "account", "finance", "stock", "bond", "debt", "credit", "budget", "remit"),
+    "fnb": ("cook", "bake", "boil", "fry", "grill", "simmer", "brew", "ingredient", "seasoning", "dish", "culinary", "ferment"),
+    "healthcare": ("diagnose", "prescribe", "symptom", "disease", "surgery", "clinical", "patient", "therapy", "sterilize", "nurse"),
+    "manufacturing": ("manufacture", "fabricate", "assemble", "machinery", "cargo", "warehouse", "mass-produce", "prototype", "inspect"),
+}
+
+
+def fetch_bytes(url: str) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": "JLPT-Verb-Studio-Scraper/1.0"})
+    with urllib.request.urlopen(req, timeout=60, context=SSL_CONTEXT) as resp:
+        return resp.read()
+
+
+def fetch_jlpt_map() -> Dict[Tuple[str, str], str]:
+    """Returns {(kanji_form, reading): 'N5'..'N1'} and {(kanji_form, ''): 'N5'..'N1'}."""
+    jlpt_lookup: Dict[Tuple[str, str], str] = {}
+    for level in ("N5", "N4", "N3", "N2", "N1"):
+        print(f"Fetching JLPT {level} list...")
+        raw = fetch_bytes(JLPT_CSV_URLS[level]).decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(raw))
+        for row in reader:
+            expr = (row.get("expression") or "").strip()
+            read = (row.get("reading") or "").strip()
+            if expr and KANJI_RE.search(expr):
+                jlpt_lookup.setdefault((expr, read), level)
+                jlpt_lookup.setdefault((expr, ""), level)
+    return jlpt_lookup
+
+
+def fetch_jmdict_words() -> List[Dict[str, Any]]:
+    release = json.loads(fetch_bytes(JMDICT_RELEASE_API).decode("utf-8"))
+    asset = next(
+        a for a in release["assets"]
+        if a["name"].startswith("jmdict-eng-") and a["name"].endswith(".json.tgz")
+    )
+    print(f"Downloading {asset['name']}...")
+    tgz_bytes = fetch_bytes(asset["browser_download_url"])
+    with tarfile.open(fileobj=io.BytesIO(tgz_bytes), mode="r:gz") as tf:
+        member = next(m for m in tf.getmembers() if m.name.endswith(".json"))
+        data = json.load(tf.extractfile(member))
+    return data["words"]
+
+
+def fetch_furigana_map() -> Dict[Tuple[str, str], List[Dict[str, Optional[str]]]]:
+    release = json.loads(fetch_bytes(FURIGANA_RELEASE_API).decode("utf-8"))
+    asset = next(
+        a for a in release["assets"]
+        if "JmdictFurigana.json" in a["name"]
+    )
+    print(f"Downloading {asset['name']}...")
+    raw = fetch_bytes(asset["browser_download_url"])
+    if asset["name"].endswith(".tar.gz") or asset["name"].endswith(".tgz"):
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tf:
+            member = next(m for m in tf.getmembers() if m.name.endswith(".json"))
+            entries = json.loads(tf.extractfile(member).read().decode("utf-8-sig"))
+    elif asset["name"].endswith(".gz"):
+        entries = json.loads(gzip.decompress(raw).decode("utf-8-sig"))
+    else:
+        entries = json.loads(raw.decode("utf-8-sig"))
+
+    furi_map: Dict[Tuple[str, str], List[Dict[str, Optional[str]]]] = {}
+    for item in entries:
+        key = (item["text"], item["reading"])
+        furi_map[key] = [
+            {"base": seg["ruby"], "ruby": seg.get("rt")}
+            for seg in item.get("furigana", [])
+        ]
+    return furi_map
+
+
+def fallback_ruby_segments(kanji_form: str, reading: str) -> List[Dict[str, Optional[str]]]:
+    """Deterministic okurigana splitter when exact character ruby isn't in JmdictFurigana."""
+    prefix = ""
+    suffix = ""
+    k_chars = list(kanji_form)
+    r_str = reading
+
+    while k_chars and not KANJI_RE.match(k_chars[0]) and r_str.startswith(k_chars[0]):
+        prefix += k_chars.pop(0)
+        r_str = r_str[1:]
+
+    while k_chars and not KANJI_RE.match(k_chars[-1]) and r_str.endswith(k_chars[-1]):
+        suffix = k_chars.pop() + suffix
+        r_str = r_str[:-1]
+
+    segments: List[Dict[str, Optional[str]]] = []
+    if prefix:
+        segments.append({"base": prefix, "ruby": None})
+    if k_chars:
+        segments.append({"base": "".join(k_chars), "ruby": r_str or reading})
+    if suffix:
+        segments.append({"base": suffix, "ruby": None})
+    return segments or [{"base": kanji_form, "ruby": reading}]
+
+
+def detect_verb_group(pos_tags: List[str]) -> str:
+    if any(p.startswith("v1") for p in pos_tags):
+        return "Ichidan"
+    if any(p.startswith("vk") or p.startswith("vs") for p in pos_tags):
+        return "Irregular"
+    return "Godan"
+
+
+def infer_industries(fields: List[str], meanings: List[str], is_core: bool) -> List[str]:
+    tags = set()
+    if is_core:
+        tags.add("general")
+    for f in fields:
+        if f in FIELD_TO_INDUSTRY:
+            tags.add(FIELD_TO_INDUSTRY[f])
+    joined = " ".join(meanings).lower()
+    for industry, keywords in KEYWORD_TO_INDUSTRY.items():
+        if any(kw in joined for kw in keywords):
+            tags.add(industry)
+    return sorted(tags) or ["general"]
+
+
+def scrape_all_verbs() -> List[Dict[str, Any]]:
+    jlpt_map = fetch_jlpt_map()
+    furi_map = fetch_furigana_map()
+    words = fetch_jmdict_words()
+
+    curated_by_kanji = {v["kanji_form"]: v for v in CURATED_VERBS}
+    results: Dict[str, Dict[str, Any]] = {}
+
+    for entry in words:
+        kanji_list = entry.get("kanji") or []
+        kana_list = entry.get("kana") or []
+        if not kanji_list or not kana_list:
+            continue
+
+        kanji_form = kanji_list[0]["text"]
+        if not KANJI_RE.search(kanji_form):
+            continue
+
+        reading = kana_list[0]["text"]
+        pos_tags: List[str] = []
+        fields: List[str] = []
+        meanings: List[str] = []
+
+        for sense in entry.get("sense", []):
+            pos_tags.extend(sense.get("partOfSpeech", []))
+            fields.extend(sense.get("field", []))
+            for g in sense.get("gloss", []):
+                if g.get("lang") == "eng" and g.get("text") not in meanings:
+                    meanings.append(g["text"])
+
+        if not any(p.startswith(VERB_POS_PREFIXES) for p in pos_tags):
+            continue
+        if not meanings:
+            continue
+
+        jlpt_level = jlpt_map.get((kanji_form, reading)) or jlpt_map.get((kanji_form, ""))
+        industries = infer_industries(fields, meanings[:4], is_core=bool(jlpt_level))
+
+        # Include all JLPT N5-N1 verbs PLUS specialized workplace verbs
+        has_specialized_industry = any(t != "general" for t in industries)
+        if not jlpt_level and not has_specialized_industry:
+            continue
+
+        effective_level = jlpt_level or "N1"
+        is_core = 1 if jlpt_level else 0
+        ruby_segs = furi_map.get((kanji_form, reading)) or fallback_ruby_segments(kanji_form, reading)
+        constituent_kanji = list(dict.fromkeys(KANJI_RE.findall(kanji_form)))
+
+        results[kanji_form] = {
+            "id": int(entry["id"]),
+            "kanji_form": kanji_form,
+            "furigana_reading": reading,
+            "ruby_segments": ruby_segs,
+            "meanings": meanings[:4],
+            "jlpt_level": effective_level,
+            "verb_group": detect_verb_group(pos_tags),
+            "constituent_kanji": constituent_kanji,
+            "industry_tags": industries,
+            "is_core_jlpt": is_core,
+        }
+
+    # Apply curated overrides so domain tags & ruby splits are preserved
+    for kanji_form, curated in curated_by_kanji.items():
+        if kanji_form in results:
+            merged_tags = sorted(set(results[kanji_form]["industry_tags"]) | set(curated["industry_tags"]))
+            results[kanji_form]["industry_tags"] = merged_tags
+            results[kanji_form]["ruby_segments"] = curated["ruby_segments"]
+            results[kanji_form]["jlpt_level"] = curated["jlpt_level"]
+        else:
+            results[kanji_form] = curated
+
+    level_order = {"N5": 1, "N4": 2, "N3": 3, "N2": 4, "N1": 5}
+    return sorted(results.values(), key=lambda x: (level_order[x["jlpt_level"]], x["id"]))
+
+
+def generate_sqlite_db(verbs: List[Dict[str, Any]], db_path: str) -> None:
     """Initializes and seeds the offline SQLite database."""
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     if os.path.exists(db_path):
@@ -420,24 +658,33 @@ def generate_sqlite_db(verbs: List[Dict[str, Any]], db_path: str):
             v["verb_group"],
             json.dumps(v["constituent_kanji"], ensure_ascii=False),
             json.dumps(v["industry_tags"], ensure_ascii=False),
-            v["is_core_jlpt"]
+            v["is_core_jlpt"],
         ))
 
     conn.commit()
     conn.close()
     print(f"Generated SQLite DB at {db_path} with {len(verbs)} verbs.")
 
-def main():
+
+def main() -> None:
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     db_out = os.path.join(root_dir, "src-tauri", "resources", "verbs_corpus.db")
     json_out = os.path.join(root_dir, "src", "data", "seed_verbs.json")
 
+    try:
+        verbs = scrape_all_verbs()
+        print(f"Successfully ingested {len(verbs)} JLPT & industry kanji verbs.")
+    except Exception as exc:
+        print(f"Network ingestion failed ({exc}); falling back to CURATED_VERBS seed.")
+        verbs = CURATED_VERBS
+
     os.makedirs(os.path.dirname(json_out), exist_ok=True)
     with open(json_out, "w", encoding="utf-8") as f:
-        json.dump(CURATED_VERBS, f, ensure_ascii=False, indent=2)
-    print(f"Generated seed JSON at {json_out} ({len(CURATED_VERBS)} curated verbs)")
+        json.dump(verbs, f, ensure_ascii=False, indent=2)
+    print(f"Wrote {json_out}")
 
-    generate_sqlite_db(CURATED_VERBS, db_out)
+    generate_sqlite_db(verbs, db_out)
+
 
 if __name__ == "__main__":
     main()

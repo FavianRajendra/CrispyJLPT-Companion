@@ -1,5 +1,5 @@
 [package]
-name = "jlpt-verb-studio"
+name = "CrispyJLPT-Companion"
 version = "1.0.0"
 description = "JLPT Verb Kanji Studio - Cross-Platform Offline-First Learning App"
 authors = ["JLPT Studio Team"]

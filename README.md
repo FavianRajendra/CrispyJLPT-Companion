@@ -1,4 +1,4 @@
-# JLPT Verb Kanji Studio
+# CrispyJLPT Companion
 
 > Cross-Platform Offline-First Japanese Verb Kanji Learning Studio targeting **Android (`.apk`)**, **macOS (`.dmg`)**, and **Windows (`.msi`/`.exe`)** from a single codebase.
 

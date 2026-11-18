@@ -35,6 +35,24 @@ CREATE TABLE IF NOT EXISTS user_verb_progress (
     PRIMARY KEY (user_id, verb_id)
 );
 
+
+CREATE TABLE IF NOT EXISTS learned_kanji_notes (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  kanji TEXT NOT NULL,
+  furigana TEXT NOT NULL,
+  meaning TEXT NOT NULL,
+  source_note TEXT NOT NULL DEFAULT '',
+  jlpt_level TEXT NOT NULL DEFAULT '',
+  learned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_learned_kanji_notes_user
+  ON learned_kanji_notes(user_id, learned_at DESC);
+
+  
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_verb_progress_user ON user_verb_progress(user_id);
 CREATE INDEX IF NOT EXISTS idx_verb_progress_review ON user_verb_progress(user_id, next_review_at);

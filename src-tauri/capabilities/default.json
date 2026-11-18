@@ -1,10 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for JLPT Verb Studio",
+  "description": "Default permissions for JLPT Verb Kanji Studio",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "sql:default"
+    "sql:default",
+    "sql:allow-load",
+    "sql:allow-execute",
+    "sql:allow-select",
+    "sql:allow-close"
   ]
 }

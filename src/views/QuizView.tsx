@@ -1,613 +1,1138 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
-  Brain,
   CheckCircle2,
   XCircle,
-  ArrowRight,
-  RotateCcw,
-  Trophy,
-  Flame,
   Volume2,
-  BookOpen,
+  RotateCcw,
+  Eye,
+  EyeOff,
+  History,
+  BrainCircuit,
   Sparkles,
-  HelpCircle,
-  Briefcase,
-  AlertTriangle,
-  Infinity as InfinityIcon,
+  Trash2,
+  Award,
+  Flame,
 } from "lucide-react";
-import { VerbWithProgress, updateFsrsProgress, saveVerbProgress } from "../lib/mastery";
-import { UserProfile, IndustryTrack } from "../lib/db";
+import {
+  Verb,
+  UserProfile,
+  VerbProgress,
+  JlptLevel,
+  getDatabase,
+} from "../lib/db";
 import { speakJapanese } from "../lib/audio";
-import { cn } from "../lib/utils";
 
-interface QuizViewProps {
-  verbs: VerbWithProgress[];
+export interface QuizViewProps {
+  verbs: Verb[];
   profile: UserProfile;
-  onVerbUpdated: () => void;
+  progressMap?: Map<number, VerbProgress> | Record<number, VerbProgress>;
+  onUpdateProgress?: (progress: VerbProgress) => void | Promise<void>;
+  onRecordProgress?: (progress: VerbProgress) => void | Promise<void>;
+  onProgressUpdate?: (progress: VerbProgress) => void | Promise<void>;
 }
 
-export type QuizMode = "weakness" | "reading" | "meaning" | "reverse";
-export type QuestionCountPreset = 10 | 20 | 30 | 40 | "infinite";
+type QuizMode = "kanji_to_meaning" | "kanji_to_reading" | "meaning_to_kanji" | "mixed";
+type SessionLength = 10 | 20 | 30 | 40 | 0; // 0 = Infinite
 
 interface QuizOption {
-  text: string;
-  sourceVerb: VerbWithProgress;
+  id: string;
+  label: string;
+  verbId: number;
+  kanji: string;
+  furigana: string;
+  meaning: string;
+  jlptLevel: JlptLevel;
+  isCorrect: boolean;
 }
 
-interface Question {
-  verb: VerbWithProgress;
-  mode: "reading" | "meaning" | "reverse";
-  prompt: string;
-  subPrompt?: string;
+interface QuizQuestion {
+  id: string;
+  mode: Exclude<QuizMode, "mixed">;
+  targetVerb: Verb;
   options: QuizOption[];
-  correctIndex: number;
 }
 
-const ALL_INDUSTRY_TRACKS: { id: IndustryTrack; label: string; short: string }[] = [
-  { id: "it", label: "IT & Tech", short: "IT" },
-  { id: "finance", label: "Finance", short: "Finance" },
-  { id: "fnb", label: "Food & Beverage", short: "F&B" },
-  { id: "healthcare", label: "Healthcare", short: "Health" },
-  { id: "manufacturing", label: "Manufacturing", short: "Mfg" },
-  { id: "general", label: "General", short: "General" },
-];
+export interface QuizHistoryEntry {
+  id: string;
+  verb_id: number;
+  kanji_form: string;
+  furigana_reading: string;
+  correct_meaning: string;
+  jlpt_level: string;
+  quiz_mode: string;
+  is_correct: number; // 1 = right, 0 = wrong
+  selected_label: string;
+  selected_kanji: string;
+  selected_furigana: string;
+  selected_meaning: string;
+  correct_label: string;
+  answered_at: string;
+}
 
-export const QuizView: React.FC<QuizViewProps> = ({ verbs, profile, onVerbUpdated }) => {
-  const [selectedMode, setSelectedMode] = useState<QuizMode>("weakness");
-  const [selectedJlpt, setSelectedJlpt] = useState<string>("All");
-  const [selectedTracks, setSelectedTracks] = useState<IndustryTrack[]>(() =>
-    Array.isArray(profile.target_industries) ? profile.target_industries : []
+const JLPT_LEVELS: JlptLevel[] = ["N5", "N4", "N3", "N2", "N1"];
+
+function getProgressEntry(
+  progressMap: Map<number, VerbProgress> | Record<number, VerbProgress> | undefined,
+  verbId: number
+): VerbProgress | undefined {
+  if (!progressMap) return undefined;
+  if (progressMap instanceof Map) {
+    return progressMap.get(verbId);
+  }
+  return progressMap[verbId];
+}
+
+function formatHistoryTime(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
+}
+
+function renderRubyText(verb: Verb, showFurigana: boolean) {
+  if (!showFurigana) {
+    return <span>{verb.kanji_form}</span>;
+  }
+  if (Array.isArray(verb.ruby_segments) && verb.ruby_segments.length > 0) {
+    return (
+      <ruby className="ruby-align">
+        {verb.ruby_segments.map((seg, idx) => (
+          <React.Fragment key={idx}>
+            <span>{seg.base}</span>
+            {seg.ruby ? (
+              <rt className="text-xs sm:text-sm text-accent font-medium tracking-normal">
+                {seg.ruby}
+              </rt>
+            ) : (
+              <rt />
+            )}
+          </React.Fragment>
+        ))}
+      </ruby>
+    );
+  }
+  return (
+    <ruby>
+      <span>{verb.kanji_form}</span>
+      <rt className="text-xs sm:text-sm text-accent font-medium">{verb.furigana_reading}</rt>
+    </ruby>
   );
-  const [countPreset, setCountPreset] = useState<QuestionCountPreset>(10);
+}
 
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [selectedOption, setSelectedOption] = useState<number | null>(null);
-  const [isAnswered, setIsAnswered] = useState(false);
-  const [score, setScore] = useState(0);
-  const [answeredCount, setAnsweredCount] = useState(0);
-  const [streak, setStreak] = useState(0);
-  const [maxStreak, setMaxStreak] = useState(0);
-  const [isFinished, setIsFinished] = useState(false);
+export const QuizView: React.FC<QuizViewProps> = ({
+  verbs,
+  profile,
+  progressMap,
+  onUpdateProgress,
+  onRecordProgress,
+  onProgressUpdate,
+}) => {
+  const [subView, setSubView] = useState<"quiz" | "history">("quiz");
+  const [quizMode, setQuizMode] = useState<QuizMode>("kanji_to_meaning");
+  const [sessionLength, setSessionLength] = useState<SessionLength>(20);
+  const [selectedLevels, setSelectedLevels] = useState<JlptLevel[]>([]);
+  const [showFurigana, setShowFurigana] = useState<boolean>(true);
 
-  const toggleTrack = (trackId: IndustryTrack) => {
-    setSelectedTracks((prev) =>
-      prev.includes(trackId) ? prev.filter((t) => t !== trackId) : [...prev, trackId]
+  // Active question & session metrics
+  const [currentQuestion, setCurrentQuestion] = useState<QuizQuestion | null>(null);
+  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
+  const [questionsAnswered, setQuestionsAnswered] = useState<number>(0);
+  const [correctCount, setCorrectCount] = useState<number>(0);
+  const [streak, setStreak] = useState<number>(0);
+  const [bestStreak, setBestStreak] = useState<number>(0);
+  const [usedVerbIds, setUsedVerbIds] = useState<Set<number>>(new Set());
+
+  // Persistent Quiz History state
+  const [history, setHistory] = useState<QuizHistoryEntry[]>([]);
+  const [historyFilter, setHistoryFilter] = useState<"all" | "wrong" | "correct">("all");
+
+  // Ensure SQLite quiz_history table exists and load history
+  const loadQuizHistory = useCallback(async () => {
+    try {
+      const db = await getDatabase();
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS quiz_history (
+          id TEXT PRIMARY KEY,
+          verb_id INTEGER NOT NULL,
+          kanji_form TEXT NOT NULL,
+          furigana_reading TEXT NOT NULL,
+          correct_meaning TEXT NOT NULL,
+          jlpt_level TEXT NOT NULL,
+          quiz_mode TEXT NOT NULL,
+          is_correct INTEGER NOT NULL,
+          selected_label TEXT NOT NULL,
+          selected_kanji TEXT NOT NULL,
+          selected_furigana TEXT NOT NULL,
+          selected_meaning TEXT NOT NULL,
+          correct_label TEXT NOT NULL,
+          answered_at TEXT NOT NULL
+        );
+      `);
+      const rows = await db.select<QuizHistoryEntry[]>(
+        `SELECT * FROM quiz_history ORDER BY answered_at DESC LIMIT 250;`
+      );
+      setHistory(rows || []);
+    } catch (err) {
+      console.warn("[QuizView] Failed to load quiz history:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadQuizHistory();
+  }, [loadQuizHistory]);
+
+  const toggleLevel = (lvl: JlptLevel) => {
+    setSelectedLevels((prev) =>
+      prev.includes(lvl) ? prev.filter((x) => x !== lvl) : [...prev, lvl]
     );
   };
 
-  // Build filtered candidate pool based on JLPT & Tracks
-  const filteredPool = React.useMemo(() => {
-    let pool = [...verbs];
-    if (selectedJlpt !== "All") {
-      pool = pool.filter((v) => v.jlpt_level === selectedJlpt);
+  // Filter candidate verbs by selected JLPT levels (or active profile band if none selected)
+  const candidatePool = useMemo(() => {
+    if (!verbs || verbs.length === 0) return [];
+    if (selectedLevels.length > 0) {
+      const filtered = verbs.filter((v) => selectedLevels.includes(v.jlpt_level));
+      if (filtered.length >= 4) return filtered;
     }
+    return verbs;
+  }, [verbs, selectedLevels]);
 
-    if (selectedTracks.length === 0) {
-      pool = pool.filter((v) => v.is_core_jlpt === 1);
-    } else {
-      pool = pool.filter(
-        (v) => v.is_core_jlpt === 1 || v.industry_tags.some((t) => selectedTracks.includes(t))
-      );
-    }
+  // Build a fresh 4-option multiple-choice question
+  const buildQuestion = useCallback(
+    (pool: Verb[], excludeIds: Set<number>): QuizQuestion | null => {
+      if (pool.length < 4) return null;
 
-    return pool;
-  }, [verbs, selectedJlpt, selectedTracks]);
+      const remaining = pool.filter((v) => !excludeIds.has(v.id));
+      const sourcePool = remaining.length > 0 ? remaining : pool;
 
-  // Generate Questions for the chosen quiz mode and count
-  const generateQuiz = useCallback(() => {
-    if (filteredPool.length < 4) return;
-
-    let pool = [...filteredPool];
-    if (selectedMode === "weakness") {
-      pool.sort((a, b) => {
-        const aTargetMatch = a.jlpt_level === profile.target_jlpt ? 1 : 0;
-        const bTargetMatch = b.jlpt_level === profile.target_jlpt ? 1 : 0;
-        if (aTargetMatch !== bTargetMatch) return bTargetMatch - aTargetMatch;
-        return a.masteryScore - b.masteryScore;
+      // Prioritize weaker FSRS items slightly while keeping variety
+      const weighted = [...sourcePool].sort((a, b) => {
+        const pa = getProgressEntry(progressMap, a.id);
+        const pb = getProgressEntry(progressMap, b.id);
+        const sa = pa ? (pa.reading_score + pa.meaning_score) / 2 : 0;
+        const sb = pb ? (pb.reading_score + pb.meaning_score) / 2 : 0;
+        return sa - sb + (Math.random() - 0.5) * 0.85;
       });
-    } else {
-      pool.sort(() => Math.random() - 0.5);
-    }
 
-    const totalQuestions =
-      countPreset === "infinite" ? Math.min(50, pool.length) : Math.min(countPreset, pool.length);
-    const chosenVerbs = pool.slice(0, totalQuestions);
+      const targetVerb = weighted[0];
+      const effectiveMode: Exclude<QuizMode, "mixed"> =
+        quizMode === "mixed"
+          ? (["kanji_to_meaning", "kanji_to_reading", "meaning_to_kanji"] as const)[
+              Math.floor(Math.random() * 3)
+            ]
+          : quizMode;
 
-    const generated: Question[] = chosenVerbs.map((target) => {
-      let mode: "reading" | "meaning" | "reverse";
-      if (selectedMode === "weakness") {
-        mode = Math.random() > 0.5 ? "reading" : "meaning";
-      } else {
-        mode = selectedMode;
+      const targetMeaning = targetVerb.meanings.slice(0, 3).join(", ");
+
+      // Pick 3 distinct distractors with different meanings & readings
+      const distractors: Verb[] = [];
+      const shuffled = [...pool].sort(() => Math.random() - 0.5);
+      for (const candidate of shuffled) {
+        if (candidate.id === targetVerb.id) continue;
+        const candMeaning = candidate.meanings.slice(0, 3).join(", ");
+        if (
+          effectiveMode === "kanji_to_meaning" &&
+          candMeaning.toLowerCase() === targetMeaning.toLowerCase()
+        ) {
+          continue;
+        }
+        if (
+          effectiveMode === "kanji_to_reading" &&
+          candidate.furigana_reading === targetVerb.furigana_reading
+        ) {
+          continue;
+        }
+        if (
+          effectiveMode === "meaning_to_kanji" &&
+          candidate.kanji_form === targetVerb.kanji_form
+        ) {
+          continue;
+        }
+        if (distractors.some((d) => d.id === candidate.id)) continue;
+        distractors.push(candidate);
+        if (distractors.length === 3) break;
       }
 
-      // Pick 3 distractors from verbs
-      const distractors = verbs.filter((v) => v.id !== target.id);
-      distractors.sort(() => Math.random() - 0.5);
-      const chosenDistractors = distractors.slice(0, 3);
+      if (distractors.length < 3) return null;
 
-      let prompt = "";
-      let subPrompt: string | undefined = undefined;
+      const toOption = (v: Verb, isCorrect: boolean): QuizOption => {
+        const meaningText = v.meanings.slice(0, 3).join(", ");
+        let label = meaningText;
+        if (effectiveMode === "kanji_to_reading") {
+          label = v.furigana_reading;
+        } else if (effectiveMode === "meaning_to_kanji") {
+          label = v.kanji_form;
+        }
+        return {
+          id: `${v.id}_${isCorrect ? "correct" : "dist"}_${Math.random().toString(36).slice(2, 6)}`,
+          label,
+          verbId: v.id,
+          kanji: v.kanji_form,
+          furigana: v.furigana_reading,
+          meaning: meaningText,
+          jlptLevel: v.jlpt_level,
+          isCorrect,
+        };
+      };
 
-      const rawOptions: QuizOption[] = [
-        {
-          text:
-            mode === "reading"
-              ? target.furigana_reading
-              : mode === "meaning"
-              ? target.meanings[0]
-              : target.kanji_form,
-          sourceVerb: target,
-        },
-        ...chosenDistractors.map((d) => ({
-          text:
-            mode === "reading"
-              ? d.furigana_reading
-              : mode === "meaning"
-              ? d.meanings[0]
-              : d.kanji_form,
-          sourceVerb: d,
-        })),
-      ];
-
-      if (mode === "reading") {
-        prompt = target.kanji_form;
-        subPrompt = "Select the correct Furigana reading";
-      } else if (mode === "meaning") {
-        prompt = target.kanji_form;
-        subPrompt = `[${target.furigana_reading}] Select the English meaning`;
-      } else {
-        prompt = target.meanings.slice(0, 2).join("; ");
-        subPrompt = `[Reading: ${target.furigana_reading}] Which Kanji matches this meaning?`;
-      }
-
-      // Shuffle options while tracking correct option
-      const correctOption = rawOptions[0];
-      const shuffled = [...rawOptions].sort(() => Math.random() - 0.5);
-      const correctIndex = shuffled.indexOf(correctOption);
+      const options = [
+        toOption(targetVerb, true),
+        ...distractors.map((d) => toOption(d, false)),
+      ].sort(() => Math.random() - 0.5);
 
       return {
-        verb: target,
-        mode,
-        prompt,
-        subPrompt,
-        options: shuffled,
-        correctIndex,
+        id: `q_${Date.now()}_${targetVerb.id}`,
+        mode: effectiveMode,
+        targetVerb,
+        options,
       };
-    });
+    },
+    [quizMode, progressMap]
+  );
 
-    setQuestions(generated);
-    setCurrentIndex(0);
-    setSelectedOption(null);
-    setIsAnswered(false);
-    setScore(0);
-    setAnsweredCount(0);
+  // Start / reset session whenever mode, length, or JLPT filters change
+  const restartSession = useCallback(() => {
+    const emptySet = new Set<number>();
+    setQuestionsAnswered(0);
+    setCorrectCount(0);
     setStreak(0);
-    setMaxStreak(0);
-    setIsFinished(false);
-  }, [filteredPool, verbs, selectedMode, profile, countPreset]);
+    setSelectedOptionId(null);
+    const first = buildQuestion(candidatePool, emptySet);
+    if (first) {
+      emptySet.add(first.targetVerb.id);
+    }
+    setUsedVerbIds(emptySet);
+    setCurrentQuestion(first);
+  }, [buildQuestion, candidatePool]);
 
   useEffect(() => {
-    generateQuiz();
-  }, [generateQuiz]);
+    restartSession();
+  }, [restartSession]);
 
-  const currentQ = questions[currentIndex];
+  // Handle user answer selection
+  const handleSelectOption = async (option: QuizOption) => {
+    if (!currentQuestion || selectedOptionId !== null) return;
 
-  const handleSelectOption = async (optionIndex: number) => {
-    if (isAnswered || !currentQ) return;
-    setSelectedOption(optionIndex);
-    setIsAnswered(true);
-    setAnsweredCount((c) => c + 1);
+    setSelectedOptionId(option.id);
+    const isRight = option.isCorrect;
+    const nextAnswered = questionsAnswered + 1;
+    const nextCorrect = isRight ? correctCount + 1 : correctCount;
+    const nextStreak = isRight ? streak + 1 : 0;
 
-    const isCorrect = optionIndex === currentQ.correctIndex;
-    if (isCorrect) {
-      setScore((s) => s + 1);
-      setStreak((st) => {
-        const next = st + 1;
-        if (next > maxStreak) setMaxStreak(next);
-        return next;
-      });
-      speakJapanese(currentQ.verb.furigana_reading);
-
-      // FSRS boost
-      const updated = updateFsrsProgress(
-        currentQ.verb.progress,
-        currentQ.verb.id,
-        "easy",
-        currentQ.mode === "reading" ? "reading" : "meaning"
-      );
-      await saveVerbProgress(updated);
-      onVerbUpdated();
-    } else {
-      setStreak(0);
-      // FSRS penalty
-      const updated = updateFsrsProgress(
-        currentQ.verb.progress,
-        currentQ.verb.id,
-        "again",
-        currentQ.mode === "reading" ? "reading" : "meaning"
-      );
-      await saveVerbProgress(updated);
-      onVerbUpdated();
-
-      // In Infinite mode: re-queue missed question 3-5 cards ahead
-      if (countPreset === "infinite") {
-        setQuestions((prev) => {
-          const nextQuestions = [...prev];
-          const insertIdx = Math.min(nextQuestions.length, currentIndex + 4);
-          nextQuestions.splice(insertIdx, 0, currentQ);
-          return nextQuestions;
-        });
-      }
+    setQuestionsAnswered(nextAnswered);
+    setCorrectCount(nextCorrect);
+    setStreak(nextStreak);
+    if (nextStreak > bestStreak) {
+      setBestStreak(nextStreak);
     }
-  };
 
-  const handleNextQuestion = () => {
-    if (currentIndex < questions.length - 1) {
-      setCurrentIndex((i) => i + 1);
-      setSelectedOption(null);
-      setIsAnswered(false);
-    } else if (countPreset === "infinite") {
-      // Loop with reshuffled questions in infinite mode
-      generateQuiz();
-    } else {
-      setIsFinished(true);
-    }
-  };
+    const target = currentQuestion.targetVerb;
+    const correctOption =
+      currentQuestion.options.find((o) => o.isCorrect) || option;
+    const nowIso = new Date().toISOString();
 
-  // Keyboard navigation 1-4, Enter
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-      if (!isAnswered) {
-        if (e.key === "1") handleSelectOption(0);
-        else if (e.key === "2") handleSelectOption(1);
-        else if (e.key === "3") handleSelectOption(2);
-        else if (e.key === "4") handleSelectOption(3);
-      } else {
-        if (e.key === "Enter" || e.code === "Space") {
-          e.preventDefault();
-          handleNextQuestion();
-        }
-      }
+    // 1. Save to persistent SQLite quiz_history
+    const historyRow: QuizHistoryEntry = {
+      id: `qh_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      verb_id: target.id,
+      kanji_form: target.kanji_form,
+      furigana_reading: target.furigana_reading,
+      correct_meaning: target.meanings.slice(0, 3).join(", "),
+      jlpt_level: target.jlpt_level,
+      quiz_mode: currentQuestion.mode,
+      is_correct: isRight ? 1 : 0,
+      selected_label: option.label,
+      selected_kanji: option.kanji,
+      selected_furigana: option.furigana,
+      selected_meaning: option.meaning,
+      correct_label: correctOption.label,
+      answered_at: nowIso,
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isAnswered, handleSelectOption, handleNextQuestion]);
+    setHistory((prev) => [historyRow, ...prev]);
 
-  if (filteredPool.length < 4) {
-    return (
-      <div className="flex flex-col items-center justify-center p-12 text-center text-primary-muted">
-        <HelpCircle className="w-12 h-12 mb-3 text-primary-muted/50" />
-        <p className="text-lg font-medium">At least 4 verbs are required for quizzes.</p>
-        <button
-          onClick={() => {
-            setSelectedJlpt("All");
-            setSelectedTracks([]);
-          }}
-          className="mt-4 px-4 py-2 rounded-full glass-panel hover:bg-surface-hover text-sm font-medium transition-colors"
-        >
-          Reset Filters
-        </button>
-      </div>
-    );
-  }
+    try {
+      const db = await getDatabase();
+      await db.execute(
+        `INSERT INTO quiz_history (
+          id, verb_id, kanji_form, furigana_reading, correct_meaning, jlpt_level,
+          quiz_mode, is_correct, selected_label, selected_kanji, selected_furigana,
+          selected_meaning, correct_label, answered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        [
+          historyRow.id,
+          historyRow.verb_id,
+          historyRow.kanji_form,
+          historyRow.furigana_reading,
+          historyRow.correct_meaning,
+          historyRow.jlpt_level,
+          historyRow.quiz_mode,
+          historyRow.is_correct,
+          historyRow.selected_label,
+          historyRow.selected_kanji,
+          historyRow.selected_furigana,
+          historyRow.selected_meaning,
+          historyRow.correct_label,
+          historyRow.answered_at,
+        ]
+      );
 
-  // Quiz Finished Screen
-  if (isFinished) {
-    const percentage =
-      answeredCount > 0 ? Math.round((score / answeredCount) * 100) : 0;
-    return (
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="w-full max-w-xl mx-auto my-8 p-8 glass-card border border-border-glass text-center rounded-[var(--card-radius)]"
-      >
-        <div className="w-20 h-20 mx-auto rounded-full bg-accent/20 border border-accent/40 flex items-center justify-center mb-4 text-accent shadow-neon-glow">
-          <Trophy className="w-10 h-10" />
-        </div>
+      // 2. Update Dual-Axis FSRS progress in SQLite
+      const existing = getProgressEntry(progressMap, target.id);
+      const prevReading = existing?.reading_score ?? 0;
+      const prevMeaning = existing?.meaning_score ?? 0;
+      const prevStability = existing?.stability_days ?? 1.0;
+      const prevReps = existing?.repetitions ?? 0;
+      const prevLapses = existing?.lapses ?? 0;
 
-        <h2 className="text-2xl font-bold text-primary mb-1">Quiz Completed!</h2>
-        <p className="text-sm text-primary-muted mb-6">Dual-axis FSRS memory scores have been updated.</p>
+      const isReadingTest = currentQuestion.mode === "kanji_to_reading";
+      const nextReading = isReadingTest
+        ? isRight
+          ? Math.min(1, prevReading + 0.22)
+          : Math.max(0, prevReading - 0.15)
+        : isRight
+          ? Math.min(1, prevReading + 0.08)
+          : prevReading;
 
-        {/* Score & Streak Stats */}
-        <div className="grid grid-cols-3 gap-4 mb-8">
-          <div className="p-4 glass-panel rounded-2xl">
-            <span className="text-xs text-primary-muted font-medium block mb-1">Score</span>
-            <span className="text-2xl font-bold text-accent">
-              {score} / {answeredCount}
-            </span>
-          </div>
-          <div className="p-4 glass-panel rounded-2xl">
-            <span className="text-xs text-primary-muted font-medium block mb-1">Accuracy</span>
-            <span className="text-2xl font-bold text-emerald-400">{percentage}%</span>
-          </div>
-          <div className="p-4 glass-panel rounded-2xl">
-            <span className="text-xs text-primary-muted font-medium block mb-1">Best Streak</span>
-            <span className="text-2xl font-bold text-amber-400 flex items-center justify-center gap-1">
-              <Flame className="w-5 h-5 text-amber-400 fill-amber-400" />
-              {maxStreak}
-            </span>
-          </div>
-        </div>
+      const nextMeaning = !isReadingTest
+        ? isRight
+          ? Math.min(1, prevMeaning + 0.22)
+          : Math.max(0, prevMeaning - 0.15)
+        : isRight
+          ? Math.min(1, prevMeaning + 0.08)
+          : prevMeaning;
 
-        {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-          <button
-            onClick={generateQuiz}
-            className="w-full sm:w-auto px-6 py-3 rounded-xl bg-accent hover:bg-accent-hover text-white font-semibold text-sm flex items-center justify-center gap-2 transition-all shadow-neon-glow"
-          >
-            <RotateCcw className="w-4 h-4" />
-            <span>Retake Exam</span>
-          </button>
-        </div>
-      </motion.div>
-    );
-  }
+      const nextStability = isRight
+        ? Math.min(180, prevStability * 1.65 + 0.5)
+        : Math.max(0.5, prevStability * 0.5);
+      const nextReviewDate = new Date(
+        Date.now() + nextStability * 24 * 60 * 60 * 1000
+      ).toISOString();
 
-  if (!currentQ) return null;
+      const updatedProgress: VerbProgress = {
+        verb_id: target.id,
+        reading_score: Number(nextReading.toFixed(3)),
+        meaning_score: Number(nextMeaning.toFixed(3)),
+        stability_days: Number(nextStability.toFixed(2)),
+        repetitions: isRight ? prevReps + 1 : prevReps,
+        lapses: isRight ? prevLapses : prevLapses + 1,
+        last_reviewed_at: nowIso,
+        next_review_at: nextReviewDate,
+        sync_dirty: 1,
+        updated_at: nowIso,
+      };
 
-  const liveAccuracy =
-    answeredCount > 0 ? Math.round((score / answeredCount) * 100) : 100;
+      await db.execute(
+        `INSERT INTO user_verb_progress (
+          verb_id, reading_score, meaning_score, stability_days,
+          repetitions, lapses, last_reviewed_at, next_review_at, sync_dirty, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        ON CONFLICT(verb_id) DO UPDATE SET
+          reading_score = excluded.reading_score,
+          meaning_score = excluded.meaning_score,
+          stability_days = excluded.stability_days,
+          repetitions = excluded.repetitions,
+          lapses = excluded.lapses,
+          last_reviewed_at = excluded.last_reviewed_at,
+          next_review_at = excluded.next_review_at,
+          sync_dirty = 1,
+          updated_at = excluded.updated_at;`,
+        [
+          updatedProgress.verb_id,
+          updatedProgress.reading_score,
+          updatedProgress.meaning_score,
+          updatedProgress.stability_days,
+          updatedProgress.repetitions,
+          updatedProgress.lapses,
+          updatedProgress.last_reviewed_at,
+          updatedProgress.next_review_at,
+          updatedProgress.updated_at,
+        ]
+      );
 
-  const correctOpt = currentQ.options[currentQ.correctIndex];
-  const chosenOpt = selectedOption !== null ? currentQ.options[selectedOption] : null;
+      onUpdateProgress?.(updatedProgress);
+      onRecordProgress?.(updatedProgress);
+      onProgressUpdate?.(updatedProgress);
+    } catch (err) {
+      console.warn("[QuizView] Error saving progress/history:", err);
+    }
+  };
+
+  // Advance to next question
+  const handleNextQuestion = useCallback(() => {
+    if (sessionLength > 0 && questionsAnswered >= sessionLength) {
+      return;
+    }
+    const nextUsed = new Set(usedVerbIds);
+    const nextQ = buildQuestion(candidatePool, nextUsed);
+    if (nextQ) {
+      nextUsed.add(nextQ.targetVerb.id);
+    }
+    setUsedVerbIds(nextUsed);
+    setSelectedOptionId(null);
+    setCurrentQuestion(nextQ);
+  }, [sessionLength, questionsAnswered, usedVerbIds, buildQuestion, candidatePool]);
+
+  // Keyboard shortcuts: 1-4 to pick answer, Enter/Space for Next
+  useEffect(() => {
+    if (subView !== "quiz") return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+      if (!currentQuestion) return;
+
+      if (selectedOptionId === null && ["1", "2", "3", "4"].includes(e.key)) {
+        const idx = Number(e.key) - 1;
+        const opt = currentQuestion.options[idx];
+        if (opt) {
+          e.preventDefault();
+          handleSelectOption(opt);
+        }
+      } else if (
+        selectedOptionId !== null &&
+        (e.key === "Enter" || e.key === " " || e.key === "ArrowRight")
+      ) {
+        e.preventDefault();
+        handleNextQuestion();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  const handleClearHistory = async () => {
+    try {
+      const db = await getDatabase();
+      await db.execute(`DELETE FROM quiz_history;`);
+      setHistory([]);
+    } catch (err) {
+      console.warn("[QuizView] Failed to clear history:", err);
+    }
+  };
+
+  const wrongHistoryCount = useMemo(
+    () => history.filter((h) => h.is_correct === 0).length,
+    [history]
+  );
+
+  const filteredHistory = useMemo(() => {
+    if (historyFilter === "wrong") return history.filter((h) => h.is_correct === 0);
+    if (historyFilter === "correct") return history.filter((h) => h.is_correct === 1);
+    return history;
+  }, [history, historyFilter]);
+
+  const selectedOption = useMemo(
+    () =>
+      currentQuestion?.options.find((o) => o.id === selectedOptionId) || null,
+    [currentQuestion, selectedOptionId]
+  );
+
+  const correctOption = useMemo(
+    () => currentQuestion?.options.find((o) => o.isCorrect) || null,
+    [currentQuestion]
+  );
+
+  const isSessionComplete =
+    sessionLength > 0 &&
+    questionsAnswered >= sessionLength &&
+    selectedOptionId !== null;
+
+  const accuracyPct =
+    questionsAnswered === 0
+      ? 0
+      : Math.round((correctCount / questionsAnswered) * 100);
 
   return (
-    <div className="w-full max-w-2xl mx-auto px-4 py-6">
-      {/* Top Filter Bar: Quiz Modes & Presets */}
-      <div className="flex flex-col gap-3 mb-6">
-        <div className="flex items-center justify-between gap-2 overflow-x-auto scrollbar-none">
-          {/* Quiz Mode Selector Pills */}
-          <div className="flex items-center gap-1.5 p-1 rounded-full glass-panel">
-            {[
-              { id: "weakness", label: "Dual-Track", icon: Brain },
-              { id: "reading", label: "Reading", icon: Volume2 },
-              { id: "meaning", label: "Meaning", icon: BookOpen },
-              { id: "reverse", label: "Reverse", icon: Sparkles },
-            ].map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setSelectedMode(item.id as QuizMode)}
-                  className={cn(
-                    "flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all",
-                    selectedMode === item.id
-                      ? "bg-accent text-white shadow-neon-glow"
-                      : "text-primary-muted hover:text-primary hover:bg-surface-hover"
-                  )}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Question Count Presets */}
-          <div className="flex items-center gap-1 p-1 rounded-full glass-panel text-xs font-semibold">
-            {([10, 20, 30, 40, "infinite"] as QuestionCountPreset[]).map((preset) => (
-              <button
-                key={String(preset)}
-                onClick={() => setCountPreset(preset)}
-                className={cn(
-                  "px-2.5 py-1 rounded-full transition-all flex items-center justify-center",
-                  countPreset === preset
-                    ? "bg-accent text-white shadow-neon-glow"
-                    : "text-primary-muted hover:text-primary"
-                )}
-              >
-                {preset === "infinite" ? <InfinityIcon className="w-3.5 h-3.5" /> : preset}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Multi-Select Career Tracks Filter */}
-        <div className="flex flex-wrap items-center gap-1.5 p-1.5 rounded-2xl glass-panel border border-border-subtle text-xs">
-          <span className="text-[11px] font-semibold text-primary-muted px-2 flex items-center gap-1">
-            <Briefcase className="w-3 h-3" />
-            <span>Tracks:</span>
-          </span>
-
+    <div className="max-w-4xl mx-auto space-y-4 pb-24 md:pb-10">
+      {/* Top Mode & Sub-View Header Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-3xl glass-card border border-border-glass">
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setSelectedTracks([])}
-            className={cn(
-              "px-2 py-0.5 rounded-lg text-xs font-medium transition-all",
-              selectedTracks.length === 0
+            type="button"
+            onClick={() => setSubView("quiz")}
+            className={`flex items-center gap-2 min-h-[42px] px-4 py-2 rounded-2xl text-xs font-semibold transition-all ${
+              subView === "quiz"
                 ? "bg-accent text-white shadow-neon-glow"
-                : "text-primary-muted hover:text-primary glass-panel"
-            )}
+                : "glass-panel text-primary-muted hover:text-primary"
+            }`}
           >
-            Core JLPT
+            <BrainCircuit className="w-4 h-4" />
+            <span>Kanji Quiz</span>
           </button>
 
-          {ALL_INDUSTRY_TRACKS.map((track) => {
-            const isSelected = selectedTracks.includes(track.id);
-            return (
-              <button
-                key={track.id}
-                onClick={() => toggleTrack(track.id)}
-                className={cn(
-                  "px-2 py-0.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1",
-                  isSelected
-                    ? "bg-accent/20 border border-accent text-accent font-semibold"
-                    : "glass-panel text-primary-muted hover:text-primary"
-                )}
-              >
-                <span>{track.short}</span>
-                {isSelected && <CheckCircle2 className="w-2.5 h-2.5 text-accent" />}
-              </button>
-            );
-          })}
+          <button
+            type="button"
+            onClick={() => setSubView("history")}
+            className={`flex items-center gap-2 min-h-[42px] px-4 py-2 rounded-2xl text-xs font-semibold transition-all ${
+              subView === "history"
+                ? "bg-accent text-white shadow-neon-glow"
+                : "glass-panel text-primary-muted hover:text-primary"
+            }`}
+          >
+            <History className="w-4 h-4" />
+            <span>Choice History ({history.length})</span>
+            {wrongHistoryCount > 0 && (
+              <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-rose-500/20 text-rose-400 font-bold tabular-nums">
+                {wrongHistoryCount} wrong
+              </span>
+            )}
+          </button>
         </div>
-      </div>
 
-      {/* Real-Time Score & Streak HUD */}
-      <div className="glass-panel p-3 rounded-2xl border border-border-glass mb-4 flex items-center justify-between text-xs">
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-primary font-semibold">
-            Score: <strong className="text-accent">{score}</strong> / {answeredCount} ({liveAccuracy}%)
-          </span>
-          {streak > 1 && (
-            <span className="flex items-center gap-1 text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded-lg border border-amber-500/30">
-              <Flame className="w-3.5 h-3.5 fill-amber-400" />
-              <span>{streak} Streak</span>
-            </span>
+        {/* Furigana Visibility Toggle */}
+        <button
+          type="button"
+          onClick={() => setShowFurigana((prev) => !prev)}
+          aria-pressed={showFurigana}
+          className={`flex items-center gap-2 min-h-[42px] px-3.5 py-2 rounded-2xl border text-xs font-semibold transition-all ${
+            showFurigana
+              ? "border-accent bg-accent/15 text-accent"
+              : "border-border-glass glass-panel text-primary-muted hover:text-primary"
+          }`}
+        >
+          {showFurigana ? (
+            <Eye className="w-4 h-4" />
+          ) : (
+            <EyeOff className="w-4 h-4" />
           )}
-        </div>
-
-        <span className="font-mono text-primary-muted">
-          Question {currentIndex + 1} /{" "}
-          {countPreset === "infinite" ? "∞" : questions.length}
-        </span>
+          <span>Furigana: {showFurigana ? "ON" : "OFF"}</span>
+        </button>
       </div>
 
-      {/* Progress Track */}
-      <div className="w-full h-1.5 bg-border-glass rounded-full overflow-hidden mb-6">
-        <div
-          className="h-full bg-accent transition-all duration-300"
-          style={{
-            width: `${
-              countPreset === "infinite"
-                ? Math.min(100, (answeredCount % 20) * 5)
-                : ((currentIndex + 1) / questions.length) * 100
-            }%`,
-          }}
-        />
-      </div>
-
-      {/* Question Card */}
-      <div className="glass-card p-6 md:p-8 rounded-[var(--card-radius)] border border-border-glass shadow-glass mb-6">
-        <div className="text-center mb-6">
-          <span className="inline-block px-2.5 py-1 rounded-full text-xs font-semibold glass-panel text-accent mb-3 uppercase tracking-wider">
-            {currentQ.verb.jlpt_level} • {currentQ.verb.verb_group}
-          </span>
-          <h2 className="font-jp text-4xl md:text-5xl font-bold text-primary mb-2">
-            {currentQ.prompt}
-          </h2>
-          {currentQ.subPrompt && (
-            <p className="text-xs md:text-sm text-primary-muted">{currentQ.subPrompt}</p>
-          )}
-        </div>
-
-        {/* 4 Adaptive Options Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {currentQ.options.map((opt, idx) => {
-            let stateClass = "glass-panel hover:bg-surface-hover text-primary border-border-glass";
-
-            if (isAnswered) {
-              if (idx === currentQ.correctIndex) {
-                stateClass = "bg-emerald-500/20 text-emerald-300 border-emerald-500/60 shadow-sm";
-              } else if (idx === selectedOption) {
-                stateClass = "bg-rose-500/20 text-rose-300 border-rose-500/60 shadow-sm";
-              } else {
-                stateClass = "opacity-40 border-transparent";
-              }
-            }
-
-            return (
-              <button
-                key={idx}
-                disabled={isAnswered}
-                onClick={() => handleSelectOption(idx)}
-                className={cn(
-                  "min-h-[var(--touch-target-min)] flex items-center justify-between p-4 rounded-xl text-left font-medium text-sm transition-all duration-150 border active:scale-98",
-                  stateClass
-                )}
-              >
-                <div className="flex items-center gap-2.5">
-                  <span className="w-6 h-6 rounded-lg glass-panel flex items-center justify-center text-xs font-bold text-primary-muted">
-                    {idx + 1}
-                  </span>
-                  <span className="font-jp text-base font-semibold">{opt.text}</span>
-                </div>
-
-                {isAnswered && idx === currentQ.correctIndex && (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 ml-2" />
-                )}
-                {isAnswered && idx === selectedOption && idx !== currentQ.correctIndex && (
-                  <XCircle className="w-5 h-5 text-rose-400 shrink-0 ml-2" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Post-Answer Diagnostic Explanation Drawer */}
-        <AnimatePresence>
-          {isAnswered && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="mt-6 pt-4 border-t border-border-glass overflow-hidden"
-            >
-              {selectedOption === currentQ.correctIndex ? (
-                /* Correct Confirmation Banner */
-                <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-start justify-between gap-3 mb-4">
-                  <div className="flex items-start gap-2.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="text-xs font-bold text-emerald-400">Correct!</p>
-                      <p className="text-xs text-primary font-medium mt-0.5">
-                        <strong>{currentQ.verb.kanji_form}</strong> ({currentQ.verb.furigana_reading}) ={" "}
-                        {currentQ.verb.meanings.join(", ")}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                /* Diagnostic Mistake Card */
-                <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 mb-4 space-y-2">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                    <div className="text-xs">
-                      <span className="font-bold text-rose-400 block mb-1">Diagnostic Breakdown:</span>
-                      {chosenOpt && (
-                        <p className="text-rose-200">
-                          You chose <strong className="text-white font-jp">{chosenOpt.sourceVerb.kanji_form}</strong> (
-                          {chosenOpt.sourceVerb.furigana_reading}) ={" "}
-                          <em>&ldquo;{chosenOpt.sourceVerb.meanings.join(", ")}&rdquo;</em>
-                        </p>
-                      )}
-                      <p className="text-emerald-300 mt-1">
-                        Correct answer: <strong className="text-white font-jp">{correctOpt.sourceVerb.kanji_form}</strong> (
-                        {correctOpt.sourceVerb.furigana_reading}) ={" "}
-                        <em>&ldquo;{correctOpt.sourceVerb.meanings.join(", ")}&rdquo;</em>
-                      </p>
-                      {countPreset === "infinite" && (
-                        <p className="text-[11px] text-amber-300 font-medium mt-1">
-                          ↻ Re-queued 4 cards ahead for memory reinforcement.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex items-center justify-end">
+      {subView === "quiz" ? (
+        <>
+          {/* Configuration & Live Score HUD */}
+          <div className="p-4 rounded-3xl glass-card border border-border-glass space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              {/* JLPT N5-N1 Multi-Select Pills */}
+              <div className="flex items-center gap-1.5 p-1 rounded-full glass-panel overflow-x-auto">
+                <span className="text-[11px] font-semibold text-primary-muted px-2">
+                  JLPT:
+                </span>
                 <button
-                  onClick={handleNextQuestion}
-                  className="px-6 py-2.5 rounded-xl bg-accent hover:bg-accent-hover text-white text-xs font-semibold flex items-center gap-1.5 transition-transform active:scale-95 shadow-neon-glow"
+                  type="button"
+                  onClick={() => setSelectedLevels([])}
+                  className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
+                    selectedLevels.length === 0
+                      ? "bg-accent text-white shadow-neon-glow"
+                      : "text-primary-muted hover:text-primary"
+                  }`}
                 >
-                  <span>
-                    {currentIndex < questions.length - 1 || countPreset === "infinite"
-                      ? "Next (Enter)"
-                      : "Finish Quiz"}
-                  </span>
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  All ({profile.current_jlpt}–{profile.target_jlpt})
+                </button>
+                {JLPT_LEVELS.map((lvl) => {
+                  const active = selectedLevels.includes(lvl);
+                  return (
+                    <button
+                      key={lvl}
+                      type="button"
+                      onClick={() => toggleLevel(lvl)}
+                      className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
+                        active
+                          ? "bg-accent text-white shadow-neon-glow"
+                          : "text-primary-muted hover:text-primary"
+                      }`}
+                    >
+                      {lvl}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Quiz Mode Selector */}
+              <div className="flex items-center gap-1.5 p-1 rounded-full glass-panel overflow-x-auto">
+                {(
+                  [
+                    { id: "kanji_to_meaning", label: "Kanji → Meaning" },
+                    { id: "kanji_to_reading", label: "Kanji → Reading" },
+                    { id: "meaning_to_kanji", label: "Meaning → Kanji" },
+                    { id: "mixed", label: "Mixed" },
+                  ] as const
+                ).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setQuizMode(m.id)}
+                    className={`px-3 py-1 rounded-full text-xs font-semibold transition-all whitespace-nowrap ${
+                      quizMode === m.id
+                        ? "bg-accent text-white shadow-neon-glow"
+                        : "text-primary-muted hover:text-primary"
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Session Length + Live Score Strip */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-border-glass text-xs">
+              <div className="flex items-center gap-1.5">
+                <span className="text-primary-muted font-medium">Questions:</span>
+                {([10, 20, 30, 40, 0] as SessionLength[]).map((len) => (
+                  <button
+                    key={len}
+                    type="button"
+                    onClick={() => setSessionLength(len)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold tabular-nums transition-colors ${
+                      sessionLength === len
+                        ? "bg-accent/20 text-accent border border-accent/40"
+                        : "glass-panel text-primary-muted hover:text-primary"
+                    }`}
+                  >
+                    {len === 0 ? "∞" : len}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-4 tabular-nums">
+                <span className="font-semibold text-primary">
+                  Score:{" "}
+                  <span className="text-emerald-400">
+                    {correctCount}/{questionsAnswered}
+                  </span>{" "}
+                  ({accuracyPct}%)
+                </span>
+                <span className="flex items-center gap-1 font-semibold text-amber-400">
+                  <Flame className="w-3.5 h-3.5" />
+                  Streak: {streak}
+                </span>
+                <button
+                  type="button"
+                  onClick={restartSession}
+                  title="Restart quiz session"
+                  className="p-1.5 rounded-lg glass-panel text-primary-muted hover:text-primary transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
                 </button>
               </div>
-            </motion.div>
+            </div>
+          </div>
+
+          {/* Active Question Card */}
+          {currentQuestion ? (
+            <div className="p-6 sm:p-8 rounded-3xl glass-card border border-border-glass space-y-6">
+              {/* Card Metadata & Pronunciation */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-1 rounded-lg bg-accent/15 text-accent text-xs font-bold">
+                    {currentQuestion.targetVerb.jlpt_level}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg glass-panel text-primary-muted text-xs font-medium">
+                    {currentQuestion.targetVerb.verb_group}
+                  </span>
+                  {sessionLength > 0 && (
+                    <span className="text-xs text-primary-muted tabular-nums">
+                      Question {Math.min(questionsAnswered + (selectedOptionId ? 0 : 1), sessionLength)} /{" "}
+                      {sessionLength}
+                    </span>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    speakJapanese(
+                      currentQuestion.targetVerb.furigana_reading ||
+                        currentQuestion.targetVerb.kanji_form
+                    )
+                  }
+                  aria-label="Listen to pronunciation"
+                  className="flex items-center gap-1.5 min-h-[40px] px-3 py-1.5 rounded-xl glass-panel border border-border-glass text-xs font-semibold text-primary hover:text-accent transition-colors"
+                >
+                  <Volume2 className="w-4 h-4 text-accent" />
+                  <span>Listen</span>
+                </button>
+              </div>
+
+              {/* Prompt Display */}
+              <div className="text-center py-4 space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-primary-muted">
+                  {currentQuestion.mode === "kanji_to_meaning" &&
+                    "Select the correct English meaning"}
+                  {currentQuestion.mode === "kanji_to_reading" &&
+                    "Select the correct Hiragana reading"}
+                  {currentQuestion.mode === "meaning_to_kanji" &&
+                    "Select the matching Japanese Kanji"}
+                </p>
+
+                {currentQuestion.mode === "meaning_to_kanji" ? (
+                  <div className="space-y-1.5">
+                    <h2 className="text-2xl sm:text-3xl font-bold text-primary">
+                      {currentQuestion.targetVerb.meanings.slice(0, 3).join(", ")}
+                    </h2>
+                    {showFurigana && (
+                      <p className="font-jp text-sm text-accent font-medium">
+                        Hint: {currentQuestion.targetVerb.furigana_reading}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="font-jp text-4xl sm:text-5xl font-bold text-primary tracking-wide pt-2">
+                    {renderRubyText(
+                      currentQuestion.targetVerb,
+                      currentQuestion.mode === "kanji_to_reading"
+                        ? showFurigana && selectedOptionId !== null
+                        : showFurigana
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 4 Multiple Choice Options */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {currentQuestion.options.map((opt, idx) => {
+                  const isPicked = selectedOptionId === opt.id;
+                  const isAnswered = selectedOptionId !== null;
+
+                  let styleClass =
+                    "glass-panel border-border-glass hover:border-accent/60 text-primary";
+                  if (isAnswered) {
+                    if (opt.isCorrect) {
+                      styleClass =
+                        "border-emerald-500 bg-emerald-500/15 text-primary shadow-sm";
+                    } else if (isPicked && !opt.isCorrect) {
+                      styleClass =
+                        "border-rose-500 bg-rose-500/15 text-primary";
+                    } else {
+                      styleClass =
+                        "glass-panel border-border-glass opacity-55 text-primary-muted";
+                    }
+                  }
+
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      disabled={isAnswered}
+                      onClick={() => handleSelectOption(opt)}
+                      className={`min-h-[60px] p-4 rounded-2xl border text-left transition-all flex items-center justify-between gap-3 ${styleClass}`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="w-7 h-7 rounded-lg bg-surface-card border border-border-glass flex items-center justify-center text-xs font-mono font-bold text-primary-muted shrink-0">
+                          {idx + 1}
+                        </span>
+                        <div className="min-w-0">
+                          {currentQuestion.mode === "meaning_to_kanji" &&
+                            showFurigana && (
+                              <div className="font-jp text-[11px] text-accent font-medium">
+                                {opt.furigana}
+                              </div>
+                            )}
+                          <div
+                            className={`font-semibold text-sm sm:text-base truncate ${
+                              currentQuestion.mode !== "kanji_to_meaning"
+                                ? "font-jp"
+                                : ""
+                            }`}
+                          >
+                            {opt.label}
+                          </div>
+                        </div>
+                      </div>
+
+                      {isAnswered && opt.isCorrect && (
+                        <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                      )}
+                      {isAnswered && isPicked && !opt.isCorrect && (
+                        <XCircle className="w-5 h-5 text-rose-400 shrink-0" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Instant Detailed Feedback Card (Wrong Option Meaning + Right Choice) */}
+              {selectedOption && correctOption && (
+                <div
+                  className={`p-4 rounded-2xl border space-y-2.5 ${
+                    selectedOption.isCorrect
+                      ? "border-emerald-500/40 bg-emerald-500/10"
+                      : "border-rose-500/40 bg-rose-500/10"
+                  }`}
+                >
+                  {selectedOption.isCorrect ? (
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>Correct!</span>
+                        </div>
+                        <p className="text-xs sm:text-sm text-primary">
+                          <span className="font-jp font-bold">
+                            {currentQuestion.targetVerb.kanji_form}
+                          </span>{" "}
+                          <span className="font-jp text-accent">
+                            （{currentQuestion.targetVerb.furigana_reading}）
+                          </span>{" "}
+                          means{" "}
+                          <strong>
+                            "{currentQuestion.targetVerb.meanings.slice(0, 3).join(", ")}"
+                          </strong>
+                          .
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-rose-400 font-bold text-sm">
+                        <XCircle className="w-4 h-4" />
+                        <span>Incorrect — Here is the breakdown:</span>
+                      </div>
+
+                      {/* What was wrong & the meaning of the wrong option */}
+                      <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-xs sm:text-sm space-y-1">
+                        <p className="text-rose-300 font-semibold">
+                          Your choice: "{selectedOption.label}"
+                        </p>
+                        <p className="text-primary">
+                          That option belongs to{" "}
+                          <span className="font-jp font-bold text-rose-300">
+                            {selectedOption.kanji}（{selectedOption.furigana}）
+                          </span>
+                          , which means:{" "}
+                          <strong className="text-rose-200">
+                            "{selectedOption.meaning}"
+                          </strong>
+                          .
+                        </p>
+                      </div>
+
+                      {/* The right choice */}
+                      <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-xs sm:text-sm space-y-1">
+                        <p className="text-emerald-400 font-semibold">
+                          Right choice: "{correctOption.label}"
+                        </p>
+                        <p className="text-primary">
+                          <span className="font-jp font-bold text-emerald-300">
+                            {currentQuestion.targetVerb.kanji_form}（
+                            {currentQuestion.targetVerb.furigana_reading}）
+                          </span>{" "}
+                          means:{" "}
+                          <strong className="text-emerald-200">
+                            "{currentQuestion.targetVerb.meanings.slice(0, 3).join(", ")}"
+                          </strong>
+                          .
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Next Question or Session Complete Banner */}
+                  {isSessionComplete ? (
+                    <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-border-glass">
+                      <div className="flex items-center gap-2 text-sm font-bold text-primary">
+                        <Award className="w-5 h-5 text-amber-400" />
+                        <span>
+                          Session Complete! Final Score: {correctCount}/{questionsAnswered} (
+                          {accuracyPct}%) • Best Streak: {bestStreak}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={restartSession}
+                        className="min-h-[42px] px-5 py-2 rounded-xl bg-accent text-white font-semibold text-xs hover:opacity-95 shadow-neon-glow"
+                      >
+                        Start New Session
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="pt-1 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleNextQuestion}
+                        className="min-h-[42px] px-5 py-2 rounded-xl bg-accent text-white font-semibold text-xs hover:opacity-95 shadow-neon-glow"
+                      >
+                        Next Question →
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="p-8 rounded-3xl glass-card border border-border-glass text-center text-sm text-primary-muted">
+              Not enough verbs match the current filter. Select additional JLPT levels above.
+            </div>
           )}
-        </AnimatePresence>
-      </div>
+        </>
+      ) : (
+        /* QUIZ CHOICE HISTORY SECTION */
+        <div className="p-5 rounded-3xl glass-card border border-border-glass space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold text-primary flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-accent" />
+                <span>Quiz Choice & Mistake Review History</span>
+              </h3>
+              <p className="text-xs text-primary-muted">
+                Review past right & wrong choices, see what each wrong option meant, and reinforce the right answer
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="flex p-1 rounded-xl glass-panel text-xs">
+                {(
+                  [
+                    { id: "all", label: `All (${history.length})` },
+                    { id: "wrong", label: `Wrong (${wrongHistoryCount})` },
+                    {
+                      id: "correct",
+                      label: `Right (${history.length - wrongHistoryCount})`,
+                    },
+                  ] as const
+                ).map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setHistoryFilter(tab.id)}
+                    className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                      historyFilter === tab.id
+                        ? "bg-accent text-white"
+                        : "text-primary-muted hover:text-primary"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {history.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearHistory}
+                  title="Clear quiz history"
+                  className="p-2 rounded-xl glass-panel text-primary-muted hover:text-rose-400 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {filteredHistory.length === 0 ? (
+            <div className="py-12 text-center text-xs text-primary-muted">
+              No quiz history entries in this filter yet. Answer a few questions in the Kanji Quiz tab!
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-[65vh] overflow-y-auto pr-1">
+              {filteredHistory.map((item) => {
+                const isRight = item.is_correct === 1;
+                return (
+                  <div
+                    key={item.id}
+                    className={`p-4 rounded-2xl border space-y-2.5 ${
+                      isRight
+                        ? "glass-panel border-emerald-500/30"
+                        : "glass-panel border-rose-500/35"
+                    }`}
+                  >
+                    {/* Header row */}
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        {isRight ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-xs font-bold">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Right
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-400 text-xs font-bold">
+                            <XCircle className="w-3.5 h-3.5" />
+                            Wrong
+                          </span>
+                        )}
+
+                        <span className="font-jp text-lg font-bold text-primary">
+                          {item.kanji_form}
+                        </span>
+                        {showFurigana && (
+                          <span className="font-jp text-xs text-accent font-medium">
+                            （{item.furigana_reading}）
+                          </span>
+                        )}
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/15 text-accent font-bold">
+                          {item.jlpt_level}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-primary-muted">
+                          {formatHistoryTime(item.answered_at)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            speakJapanese(item.furigana_reading || item.kanji_form)
+                          }
+                          aria-label="Pronounce word"
+                          className="p-1.5 rounded-lg text-primary-muted hover:text-accent hover:bg-surface-hover"
+                        >
+                          <Volume2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Choice Details */}
+                    {isRight ? (
+                      <p className="text-xs text-primary">
+                        You selected{" "}
+                        <strong className="text-emerald-400">
+                          "{item.selected_label}"
+                        </strong>{" "}
+                        — Meaning: <strong>"{item.correct_meaning}"</strong>
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/25 space-y-0.5">
+                          <div className="font-bold text-rose-400">
+                            Your Wrong Choice: "{item.selected_label}"
+                          </div>
+                          <div className="text-primary">
+                            Meaning of{" "}
+                            <span className="font-jp font-bold">
+                              {item.selected_kanji}（{item.selected_furigana}）
+                            </span>
+                            :{" "}
+                            <strong className="text-rose-200">
+                              "{item.selected_meaning}"
+                            </strong>
+                          </div>
+                        </div>
+
+                        <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 space-y-0.5">
+                          <div className="font-bold text-emerald-400">
+                            Right Choice: "{item.correct_label}"
+                          </div>
+                          <div className="text-primary">
+                            Meaning of{" "}
+                            <span className="font-jp font-bold">
+                              {item.kanji_form}（{item.furigana_reading}）
+                            </span>
+                            :{" "}
+                            <strong className="text-emerald-200">
+                              "{item.correct_meaning}"
+                            </strong>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
