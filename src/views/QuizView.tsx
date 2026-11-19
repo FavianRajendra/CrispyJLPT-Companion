@@ -144,6 +144,98 @@ function renderRubyText(verb: Verb, showFurigana: boolean) {
   );
 }
 
+function createQuestionFromPool(
+  pool: Verb[],
+  excludeIds: Set<number>,
+  modeSetting: QuizMode,
+  currentProgressMap: Map<number, VerbProgress> | Record<number, VerbProgress> | undefined
+): QuizQuestion | null {
+  if (pool.length < 4) return null;
+
+  const remaining = pool.filter((v) => !excludeIds.has(v.id));
+  const sourcePool = remaining.length > 0 ? remaining : pool;
+
+  const weighted = [...sourcePool].sort((a, b) => {
+    const pa = getProgressEntry(currentProgressMap, a.id);
+    const pb = getProgressEntry(currentProgressMap, b.id);
+    const sa = pa ? (pa.reading_score + pa.meaning_score) / 2 : 0;
+    const sb = pb ? (pb.reading_score + pb.meaning_score) / 2 : 0;
+    return sa - sb + (Math.random() - 0.5) * 0.85;
+  });
+
+  const targetVerb = weighted[0];
+  const effectiveMode: Exclude<QuizMode, "mixed"> =
+    modeSetting === "mixed"
+      ? (["kanji_to_meaning", "kanji_to_reading", "meaning_to_kanji"] as const)[
+          Math.floor(Math.random() * 3)
+        ]
+      : modeSetting;
+
+  const targetMeaning = targetVerb.meanings.slice(0, 3).join(", ");
+
+  const distractors: Verb[] = [];
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  for (const candidate of shuffled) {
+    if (candidate.id === targetVerb.id) continue;
+    const candMeaning = candidate.meanings.slice(0, 3).join(", ");
+    if (
+      effectiveMode === "kanji_to_meaning" &&
+      candMeaning.toLowerCase() === targetMeaning.toLowerCase()
+    ) {
+      continue;
+    }
+    if (
+      effectiveMode === "kanji_to_reading" &&
+      candidate.furigana_reading === targetVerb.furigana_reading
+    ) {
+      continue;
+    }
+    if (
+      effectiveMode === "meaning_to_kanji" &&
+      candidate.kanji_form === targetVerb.kanji_form
+    ) {
+      continue;
+    }
+    if (distractors.some((d) => d.id === candidate.id)) continue;
+    distractors.push(candidate);
+    if (distractors.length === 3) break;
+  }
+
+  if (distractors.length < 3) return null;
+
+  const toOption = (v: Verb, isCorrect: boolean): QuizOption => {
+    const meaningText = v.meanings.slice(0, 3).join(", ");
+    let label = meaningText;
+    if (effectiveMode === "kanji_to_reading") {
+      label = v.furigana_reading;
+    } else if (effectiveMode === "meaning_to_kanji") {
+      label = v.kanji_form;
+    }
+    return {
+      id: `${v.id}_${isCorrect ? "correct" : "dist"}_${Math.random().toString(36).slice(2, 6)}`,
+      label,
+      verbId: v.id,
+      kanji: v.kanji_form,
+      furigana: v.furigana_reading,
+      meaning: meaningText,
+      jlptLevel: v.jlpt_level,
+      isCorrect,
+    };
+  };
+
+  const options = [
+    toOption(targetVerb, true),
+    ...distractors.map((d) => toOption(d, false)),
+  ].sort(() => Math.random() - 0.5);
+
+  return {
+    id: `q_${Date.now()}_${targetVerb.id}_${Math.random().toString(36).slice(2, 5)}`,
+    mode: effectiveMode,
+    targetVerb,
+    options,
+  };
+}
+
 export const QuizView: React.FC<QuizViewProps> = ({
   verbs,
   profile,
@@ -158,21 +250,94 @@ export const QuizView: React.FC<QuizViewProps> = ({
   const [selectedLevels, setSelectedLevels] = useState<JlptLevel[]>([]);
   const [showFurigana, setShowFurigana] = useState<boolean>(true);
 
+  // Keep parent props in refs so parent updates NEVER trigger a session reset
   const progressMapRef = useRef(progressMap);
-  useEffect(() => {
-    progressMapRef.current = progressMap;
-  }, [progressMap]);
+  progressMapRef.current = progressMap;
 
-  const [sessionRecords, setSessionRecords] = useState<SessionQuestionRecord[]>([]);
+  const verbsRef = useRef(verbs);
+  verbsRef.current = verbs;
+
+  const callbacksRef = useRef({
+    onUpdateProgress,
+    onRecordProgress,
+    onProgressUpdate,
+  });
+  callbacksRef.current = {
+    onUpdateProgress,
+    onRecordProgress,
+    onProgressUpdate,
+  };
+
+  const getFilteredPool = useCallback((levels: JlptLevel[]) => {
+    const currentVerbs = verbsRef.current || [];
+    if (currentVerbs.length === 0) return [];
+    if (levels.length > 0) {
+      const filtered = currentVerbs.filter((v) => levels.includes(v.jlpt_level));
+      if (filtered.length >= 4) return filtered;
+    }
+    return currentVerbs;
+  }, []);
+
+  // Build initial question once on mount — NO reactive useEffect watching restartSession!
+  const [sessionRecords, setSessionRecords] = useState<SessionQuestionRecord[]>(() => {
+    const initialPool = verbs && verbs.length >= 4 ? verbs : [];
+    const first = createQuestionFromPool(
+      initialPool,
+      new Set<number>(),
+      "kanji_to_meaning",
+      progressMap
+    );
+    return first
+      ? [
+          {
+            question: first,
+            selectedOptionId: null,
+            isNotSureMarked: false,
+            answeredAsIdk: false,
+          },
+        ]
+      : [];
+  });
+
   const [activeIndex, setActiveIndex] = useState<number>(0);
-
   const [questionsAnswered, setQuestionsAnswered] = useState<number>(0);
   const [correctCount, setCorrectCount] = useState<number>(0);
   const [notSureCount, setNotSureCount] = useState<number>(0);
   const [idkCount, setIdkCount] = useState<number>(0);
   const [streak, setStreak] = useState<number>(0);
   const [bestStreak, setBestStreak] = useState<number>(0);
-  const [usedVerbIds, setUsedVerbIds] = useState<Set<number>>(new Set());
+  const [usedVerbIds, setUsedVerbIds] = useState<Set<number>>(() => {
+    const s = new Set<number>();
+    if (sessionRecords[0]) {
+      s.add(sessionRecords[0].question.targetVerb.id);
+    }
+    return s;
+  });
+
+  // Populate only if `verbs` loaded asynchronously after mount while sessionRecords is still empty
+  useEffect(() => {
+    if (sessionRecords.length === 0 && verbs && verbs.length >= 4) {
+      const pool = getFilteredPool(selectedLevels);
+      const first = createQuestionFromPool(
+        pool,
+        new Set<number>(),
+        quizMode,
+        progressMapRef.current
+      );
+      if (first) {
+        setSessionRecords([
+          {
+            question: first,
+            selectedOptionId: null,
+            isNotSureMarked: false,
+            answeredAsIdk: false,
+          },
+        ]);
+        setUsedVerbIds(new Set([first.targetVerb.id]));
+        setActiveIndex(0);
+      }
+    }
+  }, [verbs, sessionRecords.length, getFilteredPool, selectedLevels, quizMode]);
 
   const [history, setHistory] = useState<QuizHistoryEntry[]>([]);
   const [historyFilter, setHistoryFilter] = useState<
@@ -232,139 +397,58 @@ export const QuizView: React.FC<QuizViewProps> = ({
     loadQuizHistory();
   }, [loadQuizHistory]);
 
-  const toggleLevel = (lvl: JlptLevel) => {
-    setSelectedLevels((prev) =>
-      prev.includes(lvl) ? prev.filter((x) => x !== lvl) : [...prev, lvl]
-    );
-  };
-
-  const candidatePool = useMemo(() => {
-    if (!verbs || verbs.length === 0) return [];
-    if (selectedLevels.length > 0) {
-      const filtered = verbs.filter((v) => selectedLevels.includes(v.jlpt_level));
-      if (filtered.length >= 4) return filtered;
-    }
-    return verbs;
-  }, [verbs, selectedLevels]);
-
-  const buildQuestion = useCallback(
-    (pool: Verb[], excludeIds: Set<number>): QuizQuestion | null => {
-      if (pool.length < 4) return null;
-
-      const remaining = pool.filter((v) => !excludeIds.has(v.id));
-      const sourcePool = remaining.length > 0 ? remaining : pool;
-
-      const weighted = [...sourcePool].sort((a, b) => {
-        const pa = getProgressEntry(progressMapRef.current, a.id);
-        const pb = getProgressEntry(progressMapRef.current, b.id);
-        const sa = pa ? (pa.reading_score + pa.meaning_score) / 2 : 0;
-        const sb = pb ? (pb.reading_score + pb.meaning_score) / 2 : 0;
-        return sa - sb + (Math.random() - 0.5) * 0.85;
-      });
-
-      const targetVerb = weighted[0];
-      const effectiveMode: Exclude<QuizMode, "mixed"> =
-        quizMode === "mixed"
-          ? (["kanji_to_meaning", "kanji_to_reading", "meaning_to_kanji"] as const)[
-              Math.floor(Math.random() * 3)
-            ]
-          : quizMode;
-
-      const targetMeaning = targetVerb.meanings.slice(0, 3).join(", ");
-
-      const distractors: Verb[] = [];
-      const shuffled = [...pool].sort(() => Math.random() - 0.5);
-      for (const candidate of shuffled) {
-        if (candidate.id === targetVerb.id) continue;
-        const candMeaning = candidate.meanings.slice(0, 3).join(", ");
-        if (
-          effectiveMode === "kanji_to_meaning" &&
-          candMeaning.toLowerCase() === targetMeaning.toLowerCase()
-        ) {
-          continue;
-        }
-        if (
-          effectiveMode === "kanji_to_reading" &&
-          candidate.furigana_reading === targetVerb.furigana_reading
-        ) {
-          continue;
-        }
-        if (
-          effectiveMode === "meaning_to_kanji" &&
-          candidate.kanji_form === targetVerb.kanji_form
-        ) {
-          continue;
-        }
-        if (distractors.some((d) => d.id === candidate.id)) continue;
-        distractors.push(candidate);
-        if (distractors.length === 3) break;
+  // Explicit session starter — ONLY runs when user clicks JLPT Level, Quiz Mode, or Restart
+  const startNewSessionWith = useCallback(
+    (nextLevels: JlptLevel[], nextMode: QuizMode) => {
+      const emptySet = new Set<number>();
+      setQuestionsAnswered(0);
+      setCorrectCount(0);
+      setNotSureCount(0);
+      setIdkCount(0);
+      setStreak(0);
+      const pool = getFilteredPool(nextLevels);
+      const first = createQuestionFromPool(
+        pool,
+        emptySet,
+        nextMode,
+        progressMapRef.current
+      );
+      if (first) {
+        emptySet.add(first.targetVerb.id);
+        setSessionRecords([
+          {
+            question: first,
+            selectedOptionId: null,
+            isNotSureMarked: false,
+            answeredAsIdk: false,
+          },
+        ]);
+      } else {
+        setSessionRecords([]);
       }
-
-      if (distractors.length < 3) return null;
-
-      const toOption = (v: Verb, isCorrect: boolean): QuizOption => {
-        const meaningText = v.meanings.slice(0, 3).join(", ");
-        let label = meaningText;
-        if (effectiveMode === "kanji_to_reading") {
-          label = v.furigana_reading;
-        } else if (effectiveMode === "meaning_to_kanji") {
-          label = v.kanji_form;
-        }
-        return {
-          id: `${v.id}_${isCorrect ? "correct" : "dist"}_${Math.random().toString(36).slice(2, 6)}`,
-          label,
-          verbId: v.id,
-          kanji: v.kanji_form,
-          furigana: v.furigana_reading,
-          meaning: meaningText,
-          jlptLevel: v.jlpt_level,
-          isCorrect,
-        };
-      };
-
-      const options = [
-        toOption(targetVerb, true),
-        ...distractors.map((d) => toOption(d, false)),
-      ].sort(() => Math.random() - 0.5);
-
-      return {
-        id: `q_${Date.now()}_${targetVerb.id}`,
-        mode: effectiveMode,
-        targetVerb,
-        options,
-      };
+      setActiveIndex(0);
+      setUsedVerbIds(emptySet);
     },
-    [quizMode]
+    [getFilteredPool]
   );
 
-  const restartSession = useCallback(() => {
-    const emptySet = new Set<number>();
-    setQuestionsAnswered(0);
-    setCorrectCount(0);
-    setNotSureCount(0);
-    setIdkCount(0);
-    setStreak(0);
-    const first = buildQuestion(candidatePool, emptySet);
-    if (first) {
-      emptySet.add(first.targetVerb.id);
-      setSessionRecords([
-        {
-          question: first,
-          selectedOptionId: null,
-          isNotSureMarked: false,
-          answeredAsIdk: false,
-        },
-      ]);
-    } else {
-      setSessionRecords([]);
-    }
-    setActiveIndex(0);
-    setUsedVerbIds(emptySet);
-  }, [buildQuestion, candidatePool]);
+  const handleToggleLevel = (lvl: JlptLevel) => {
+    const nextLevels = selectedLevels.includes(lvl)
+      ? selectedLevels.filter((x) => x !== lvl)
+      : [...selectedLevels, lvl];
+    setSelectedLevels(nextLevels);
+    startNewSessionWith(nextLevels, quizMode);
+  };
 
-  useEffect(() => {
-    restartSession();
-  }, [restartSession]);
+  const handleClearLevels = () => {
+    setSelectedLevels([]);
+    startNewSessionWith([], quizMode);
+  };
+
+  const handleChangeQuizMode = (nextMode: QuizMode) => {
+    setQuizMode(nextMode);
+    startNewSessionWith(selectedLevels, nextMode);
+  };
 
   const setCurrentNotSure = (updater: boolean | ((prev: boolean) => boolean)) => {
     setSessionRecords((prev) =>
@@ -518,14 +602,15 @@ export const QuizView: React.FC<QuizViewProps> = ({
         ]
       );
 
-      onUpdateProgress?.(updatedProgress);
-      onRecordProgress?.(updatedProgress);
-      onProgressUpdate?.(updatedProgress);
+      callbacksRef.current.onUpdateProgress?.(updatedProgress);
+      callbacksRef.current.onRecordProgress?.(updatedProgress);
+      callbacksRef.current.onProgressUpdate?.(updatedProgress);
     } catch (err) {
       console.warn("[QuizView] Error saving progress/history:", err);
     }
   };
 
+  // Locks the selected answer on screen — NEVER advances until user clicks Next Question
   const handleSelectOption = async (option: QuizOption) => {
     if (!currentQuestion || isCurrentAnswered) return;
 
@@ -564,6 +649,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
     );
   };
 
+  // Locks IDK state on screen — NEVER advances until user clicks Next Question
   const handleHonestlyDontKnow = async () => {
     if (!currentQuestion || isCurrentAnswered) return;
 
@@ -613,7 +699,13 @@ export const QuizView: React.FC<QuizViewProps> = ({
     if (sessionLength > 0 && questionsAnswered >= sessionLength) return;
 
     const nextUsed = new Set(usedVerbIds);
-    const nextQ = buildQuestion(candidatePool, nextUsed);
+    const pool = getFilteredPool(selectedLevels);
+    const nextQ = createQuestionFromPool(
+      pool,
+      nextUsed,
+      quizMode,
+      progressMapRef.current
+    );
     if (nextQ) {
       nextUsed.add(nextQ.targetVerb.id);
       setSessionRecords((prev) => [
@@ -635,8 +727,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
     sessionLength,
     questionsAnswered,
     usedVerbIds,
-    buildQuestion,
-    candidatePool,
+    getFilteredPool,
+    selectedLevels,
+    quizMode,
   ]);
 
   useEffect(() => {
@@ -827,7 +920,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 </span>
                 <button
                   type="button"
-                  onClick={() => setSelectedLevels([])}
+                  onClick={handleClearLevels}
                   className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
                     selectedLevels.length === 0
                       ? "bg-accent text-white shadow-neon-glow"
@@ -842,7 +935,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                     <button
                       key={lvl}
                       type="button"
-                      onClick={() => toggleLevel(lvl)}
+                      onClick={() => handleToggleLevel(lvl)}
                       className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
                         active
                           ? "bg-accent text-white shadow-neon-glow"
@@ -867,7 +960,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                   <button
                     key={m.id}
                     type="button"
-                    onClick={() => setQuizMode(m.id)}
+                    onClick={() => handleChangeQuizMode(m.id)}
                     className={`px-3 py-1 rounded-full text-xs font-semibold transition-all whitespace-nowrap ${
                       quizMode === m.id
                         ? "bg-accent text-white shadow-neon-glow"
@@ -923,7 +1016,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 </span>
                 <button
                   type="button"
-                  onClick={restartSession}
+                  onClick={() => startNewSessionWith(selectedLevels, quizMode)}
                   title="Restart quiz session"
                   className="p-1.5 rounded-lg glass-panel text-primary-muted hover:text-primary transition-colors"
                 >
@@ -1254,7 +1347,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                         )}
                         <button
                           type="button"
-                          onClick={restartSession}
+                          onClick={() => startNewSessionWith(selectedLevels, quizMode)}
                           className="min-h-[42px] px-5 py-2 rounded-xl bg-accent text-white font-semibold text-xs hover:opacity-95 shadow-neon-glow"
                         >
                           Start New Session

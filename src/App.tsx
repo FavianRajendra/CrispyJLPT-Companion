@@ -60,6 +60,17 @@ export function App() {
     loadAppState();
   }, [loadAppState]);
 
+  // Update a single verb's progress in-place without reloading the entire app/DB
+  const handleVerbProgressUpdate = useCallback((updatedProgress: VerbProgress) => {
+    setVerbs((prev) =>
+      prev.map((v) =>
+        v.id === updatedProgress.verb_id
+          ? { ...v, progress: updatedProgress }
+          : v
+      )
+    );
+  }, []);
+
   // Build a guaranteed Map<number, VerbProgress> for every view that reads progressMap
   const progressMap = useMemo(() => {
     const map = new Map<number, VerbProgress>();
@@ -229,7 +240,7 @@ export function App() {
                   verbs={verbs}
                   profile={profile}
                   progressMap={progressMap}
-                  onVerbUpdated={loadAppState}
+                  onUpdateProgress={handleVerbProgressUpdate}
                 />
               </motion.div>
             )}
@@ -246,7 +257,7 @@ export function App() {
                   verbs={verbs}
                   profile={profile}
                   progressMap={progressMap}
-                  onUpdateProgress={loadAppState}
+                  onUpdateProgress={handleVerbProgressUpdate}
                 />
               </motion.div>
             )}
