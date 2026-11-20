@@ -4,7 +4,7 @@
  */
 
 let cachedJaVoice: SpeechSynthesisVoice | null = null;
-let activeUtterance: SpeechSynthesisUtterance | null = null;
+// let activeUtterance: SpeechSynthesisUtterance | null = null;
 
 function resolveJapaneseVoice(): SpeechSynthesisVoice | null {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
@@ -72,7 +72,7 @@ export function speakJapanese(text: string, rate: number = 0.95): Promise<void> 
     const finish = () => {
       if (settled) return;
       settled = true;
-      activeUtterance = null;
+      // let activeUtterance: SpeechSynthesisUtterance
       resolve();
     };
 
@@ -93,7 +93,7 @@ export function speakJapanese(text: string, rate: number = 0.95): Promise<void> 
       }
 
       // Retain strong reference so macOS WKWebView does not GC utterance mid-speech
-      activeUtterance = utterance;
+      // activeUtterance = utterance;
 
       // Safety fallback timer in case WKWebView drops the onend event
       const estimatedMs = Math.max(2500, cleanText.length * 320 + 1500);

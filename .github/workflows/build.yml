@@ -78,11 +78,17 @@ jobs:
           workspaces: src-tauri
 
       - name: Install Dependencies & Build Web Bundle
+        env:
+          VITE_TURSO_DATABASE_URL: ${{ secrets.VITE_TURSO_DATABASE_URL }}
+          VITE_TURSO_AUTH_TOKEN: ${{ secrets.VITE_TURSO_AUTH_TOKEN }}
         run: |
           npm ci
           npm run build
 
       - name: Initialize & Build Android APK
+        env:
+          VITE_TURSO_DATABASE_URL: ${{ secrets.VITE_TURSO_DATABASE_URL }}
+          VITE_TURSO_AUTH_TOKEN: ${{ secrets.VITE_TURSO_AUTH_TOKEN }}
         run: |
           if [ ! -d "src-tauri/gen/android" ]; then
             npx tauri android init --ci
@@ -144,6 +150,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_TURSO_DATABASE_URL: ${{ secrets.VITE_TURSO_DATABASE_URL }}
+          VITE_TURSO_AUTH_TOKEN: ${{ secrets.VITE_TURSO_AUTH_TOKEN }}
         with:
           args: ${{ matrix.platform == 'macos' && '--target universal-apple-darwin' || '' }}
 
@@ -162,6 +170,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_TURSO_DATABASE_URL: ${{ secrets.VITE_TURSO_DATABASE_URL }}
+          VITE_TURSO_AUTH_TOKEN: ${{ secrets.VITE_TURSO_AUTH_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'CrispyJLPT-Companion ${{ github.ref_name }}'

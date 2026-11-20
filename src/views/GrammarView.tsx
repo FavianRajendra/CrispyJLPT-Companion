@@ -37,6 +37,13 @@ type GrammarSubTab = "tenses" | "particles" | "quiz";
 type QuestionCountPreset = 10 | 20 | 30 | 40 | "infinite";
 type FlagType = "idk" | "not_sure";
 
+interface GrammarAttemptRecord {
+  question: GrammarQuestion;
+  selectedOptionIndex: number | null;
+  isNotSureMarked: boolean;
+  answeredAsIdk: boolean;
+}
+
 const KANJI_CHAR_RE = /[\u4e00-\u9faf\u3400-\u4dbf]/;
 
 const IDK_BUTTON_VARIANTS = [
@@ -97,7 +104,7 @@ export const GrammarView: React.FC = () => {
   const allCorpusVerbs = useMemo(() => seedVerbs as unknown as Verb[], []);
 
   // =========================================================================
-  // Sub-tab 1: Verb Tense Matrix State (All 3,437 Verbs)
+  // Sub-tab 1: Verb Tense Matrix State
   // =========================================================================
   const [verbSearchQuery, setVerbSearchQuery] = useState<string>("");
   const [verbLevelFilter, setVerbLevelFilter] = useState<string>("All");
@@ -155,7 +162,7 @@ export const GrammarView: React.FC = () => {
   }, [particleLevelFilter]);
 
   // =========================================================================
-  // Sub-tab 3: JLPT-Style Sentence Quiz + Separate "Not Sure" & "IDK" Flags
+  // Sub-tab 3: JLPT-Style Sentence Quiz + Full End-of-Quiz Scorecard
   // =========================================================================
   const [quizLevelFilter, setQuizLevelFilter] = useState<string>("All");
   const [quizCategoryFilter, setQuizCategoryFilter] = useState<string>("All");
@@ -165,6 +172,7 @@ export const GrammarView: React.FC = () => {
   const [flaggedMap, setFlaggedMap] = useState<Record<string, FlagType>>({});
 
   const [questions, setQuestions] = useState<GrammarQuestion[]>([]);
+  const [attemptRecords, setAttemptRecords] = useState<GrammarAttemptRecord[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedOptionIndex, setSelectedOptionIndex] = useState<number | null>(null);
   const [isNotSureMarked, setIsNotSureMarked] = useState(false);
@@ -179,7 +187,6 @@ export const GrammarView: React.FC = () => {
   const [maxStreak, setMaxStreak] = useState(0);
   const [isFinished, setIsFinished] = useState(false);
 
-  // Load persisted Flagged Grammar questions (both IDK and Not Sure) from SQLite
   useEffect(() => {
     (async () => {
       try {
@@ -204,7 +211,7 @@ export const GrammarView: React.FC = () => {
         if (rows) {
           const nextMap: Record<string, FlagType> = {};
           for (const r of rows) {
-            nextMap[r.question_id] = r.flag_type || "idk";
+            nextMap[String(r.question_id)] = r.flag_type || "idk";
           }
           setFlaggedMap(nextMap);
         }
@@ -215,12 +222,13 @@ export const GrammarView: React.FC = () => {
   }, []);
 
   const persistFlag = async (questionId: string, flagType: FlagType) => {
-    setFlaggedMap((prev) => ({ ...prev, [questionId]: flagType }));
+    const key = String(questionId);
+    setFlaggedMap((prev) => ({ ...prev, [key]: flagType }));
     try {
       const db = await getDatabase();
       await db.execute(
         `INSERT OR REPLACE INTO grammar_flagged_idk (question_id, flag_type, flagged_at) VALUES (?, ?, ?);`,
-        [questionId, flagType, new Date().toISOString()]
+        [key, flagType, new Date().toISOString()]
       );
     } catch (err) {
       console.warn("[GrammarView] Failed to persist flag:", err);
@@ -228,14 +236,15 @@ export const GrammarView: React.FC = () => {
   };
 
   const clearFlag = async (questionId: string) => {
+    const key = String(questionId);
     setFlaggedMap((prev) => {
       const copy = { ...prev };
-      delete copy[questionId];
+      delete copy[key];
       return copy;
     });
     try {
       const db = await getDatabase();
-      await db.execute(`DELETE FROM grammar_flagged_idk WHERE question_id = ?;`, [questionId]);
+      await db.execute(`DELETE FROM grammar_flagged_idk WHERE question_id = ?;`, [key]);
     } catch {
       // ignore
     }
@@ -243,7 +252,7 @@ export const GrammarView: React.FC = () => {
 
   const flaggedIds = useMemo(() => Object.keys(flaggedMap), [flaggedMap]);
 
-  const generateQuiz = () => {
+  const buildFilteredPool = () => {
     let pool = [...GRAMMAR_QUIZ_QUESTIONS];
     if (quizLevelFilter !== "All") {
       pool = pool.filter((q) => q.jlpt_level === quizLevelFilter);
@@ -252,18 +261,34 @@ export const GrammarView: React.FC = () => {
       pool = pool.filter((q) => q.targetCategory === quizCategoryFilter);
     }
     if (quizDeckScope === "flagged") {
-      const flaggedPool = pool.filter((q) => Boolean(flaggedMap[q.id]));
+      const flaggedPool = pool.filter((q) => Boolean(flaggedMap[String(q.id)]));
       pool = flaggedPool.length > 0 ? flaggedPool : pool;
     }
-
     if (pool.length === 0) {
       pool = [...GRAMMAR_QUIZ_QUESTIONS];
     }
+    return pool;
+  };
 
-    pool.sort(() => Math.random() - 0.5);
+  const generateQuiz = () => {
+    const basePool = buildFilteredPool();
+    const built: GrammarQuestion[] = [];
 
-    const targetCount = countPreset === "infinite" ? pool.length : Math.min(countPreset, pool.length);
-    setQuestions(pool.slice(0, targetCount));
+    if (countPreset === "infinite") {
+      built.push(...[...basePool].sort(() => Math.random() - 0.5));
+    } else {
+      // Fill exact countPreset quantity even if filtered pool is smaller than countPreset
+      while (built.length < countPreset) {
+        const shuffledBatch = [...basePool].sort(() => Math.random() - 0.5);
+        for (const item of shuffledBatch) {
+          if (built.length >= countPreset) break;
+          built.push(item);
+        }
+      }
+    }
+
+    setQuestions(built);
+    setAttemptRecords([]);
     setCurrentIndex(0);
     setSelectedOptionIndex(null);
     setIsNotSureMarked(false);
@@ -292,9 +317,21 @@ export const GrammarView: React.FC = () => {
     setIsAnswered(true);
     setAnsweredCount((c) => c + 1);
 
+    setAttemptRecords((prev) => [
+      ...prev,
+      {
+        question: currentQ,
+        selectedOptionIndex: optIdx,
+        isNotSureMarked,
+        answeredAsIdk: false,
+      },
+    ]);
+
+    const qIdStr = String(currentQ.id);
+
     if (isNotSureMarked) {
       setSessionNotSureCount((n) => n + 1);
-      persistFlag(currentQ.id, "not_sure");
+      persistFlag(qIdStr, "not_sure");
     }
 
     const chosen = currentQ.options[optIdx];
@@ -307,9 +344,8 @@ export const GrammarView: React.FC = () => {
         if (next > maxStreak) setMaxStreak(next);
         return next;
       });
-      // Only clear previous flag if answered confidently without "Not Sure"
-      if (!isNotSureMarked && flaggedMap[currentQ.id]) {
-        clearFlag(currentQ.id);
+      if (!isNotSureMarked && flaggedMap[qIdStr]) {
+        clearFlag(qIdStr);
       }
       speakJapanese(currentQ.sentencePre + chosen.text + currentQ.sentencePost);
     } else {
@@ -334,7 +370,18 @@ export const GrammarView: React.FC = () => {
     setAnsweredCount((c) => c + 1);
     setSessionIdkCount((k) => k + 1);
     setStreak(0);
-    persistFlag(currentQ.id, "idk");
+
+    setAttemptRecords((prev) => [
+      ...prev,
+      {
+        question: currentQ,
+        selectedOptionIndex: null,
+        isNotSureMarked: false,
+        answeredAsIdk: true,
+      },
+    ]);
+
+    persistFlag(String(currentQ.id), "idk");
     speakJapanese(currentQ.sentencePre + currentQ.correctAnswer + currentQ.sentencePost);
 
     if (countPreset === "infinite") {
@@ -355,13 +402,19 @@ export const GrammarView: React.FC = () => {
       setAnsweredAsIdk(false);
       setIsAnswered(false);
     } else if (countPreset === "infinite") {
-      generateQuiz();
+      // Truly endless in infinite mode without resetting score/streak
+      const extraBatch = [...buildFilteredPool()].sort(() => Math.random() - 0.5);
+      setQuestions((prev) => [...prev, ...extraBatch]);
+      setCurrentIndex((i) => i + 1);
+      setSelectedOptionIndex(null);
+      setIsNotSureMarked(false);
+      setAnsweredAsIdk(false);
+      setIsAnswered(false);
     } else {
       setIsFinished(true);
     }
   };
 
-  // Keyboard shortcuts: 1-4 answer, U toggle Not Sure, ?/0 IDK, Enter/Space Next
   useEffect(() => {
     if (activeSubTab !== "quiz") return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -432,9 +485,7 @@ export const GrammarView: React.FC = () => {
         })}
       </div>
 
-      {/* =====================================================================
-          SUB-TAB 1: VERB TENSE & POLARITY TABLES (ALL 3,437 VERBS)
-          ===================================================================== */}
+      {/* SUB-TAB 1: VERB TENSE & POLARITY TABLES */}
       {activeSubTab === "tenses" && currentVerbModel && (
         <div className="space-y-6">
           <div className="glass-card p-4 rounded-2xl border border-border-glass space-y-3.5">
@@ -594,9 +645,7 @@ export const GrammarView: React.FC = () => {
         </div>
       )}
 
-      {/* =====================================================================
-          SUB-TAB 2: PARTICLES ENCYCLOPEDIA
-          ===================================================================== */}
+      {/* SUB-TAB 2: PARTICLES ENCYCLOPEDIA */}
       {activeSubTab === "particles" && (
         <div className="space-y-6">
           <div className="flex items-center justify-between gap-3 glass-card p-3 rounded-2xl border border-border-glass">
@@ -708,11 +757,9 @@ export const GrammarView: React.FC = () => {
         </div>
       )}
 
-      {/* =====================================================================
-          SUB-TAB 3: JLPT-STYLE SENTENCE QUIZ (NOT SURE FLAG + IDK FLAG)
-          ===================================================================== */}
+      {/* SUB-TAB 3: JLPT-STYLE SENTENCE QUIZ */}
       {activeSubTab === "quiz" && (
-        <div className="w-full max-w-2xl mx-auto space-y-4">
+        <div className="w-full max-w-3xl mx-auto space-y-4">
           <div className="flex flex-col gap-2.5 glass-card p-3 rounded-2xl border border-border-glass text-xs">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 p-1 rounded-full glass-panel">
@@ -732,7 +779,6 @@ export const GrammarView: React.FC = () => {
                 ))}
               </div>
 
-              {/* Deck Scope: All vs Flagged (Not Sure + IDK) */}
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
@@ -818,7 +864,6 @@ export const GrammarView: React.FC = () => {
             </div>
           </div>
 
-          {/* Real-Time Score, Not Sure, IDK & Streak HUD */}
           <div className="glass-panel p-3 rounded-2xl border border-border-glass flex flex-wrap items-center justify-between gap-2 text-xs">
             <div className="flex items-center gap-2.5 flex-wrap">
               <span className="font-mono text-primary font-semibold">
@@ -847,57 +892,177 @@ export const GrammarView: React.FC = () => {
             </span>
           </div>
 
-          {/* Finish Screen */}
+          {/* Complete End-of-Quiz Scorecard + Number-by-Number Option Explanations */}
           {isFinished ? (
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="glass-card p-8 rounded-[var(--card-radius)] border border-border-glass text-center shadow-glass"
+              className="glass-card p-6 sm:p-8 rounded-[var(--card-radius)] border border-border-glass shadow-glass space-y-6"
             >
-              <div className="w-16 h-16 mx-auto rounded-full bg-accent/20 border border-accent/40 flex items-center justify-center mb-4 text-accent shadow-neon-glow">
-                <Trophy className="w-8 h-8" />
-              </div>
-              <h3 className="text-xl font-bold text-primary mb-1">Grammar Exam Completed!</h3>
-              <p className="text-xs text-primary-muted mb-6">
-                {sessionNotSureCount} marked 🤔 Not Sure • {sessionIdkCount} flagged 🤷 Honestly IDK
-              </p>
-
-              <div className="grid grid-cols-3 gap-3 mb-6">
-                <div className="p-3 rounded-xl glass-panel">
-                  <span className="text-[10px] text-primary-muted block">Score</span>
-                  <span className="text-xl font-bold text-accent">{score} / {answeredCount}</span>
+              <div className="text-center">
+                <div className="w-16 h-16 mx-auto rounded-full bg-accent/20 border border-accent/40 flex items-center justify-center mb-4 text-accent shadow-neon-glow">
+                  <Trophy className="w-8 h-8" />
                 </div>
-                <div className="p-3 rounded-xl glass-panel">
-                  <span className="text-[10px] text-primary-muted block">Accuracy</span>
-                  <span className="text-xl font-bold text-emerald-400">{liveAccuracy}%</span>
-                </div>
-                <div className="p-3 rounded-xl glass-panel">
-                  <span className="text-[10px] text-primary-muted block">Best Streak</span>
-                  <span className="text-xl font-bold text-amber-400">{maxStreak}</span>
-                </div>
-              </div>
+                <h3 className="text-xl font-bold text-primary mb-1">Grammar Exam Completed!</h3>
+                <p className="text-xs text-primary-muted mb-6">
+                  {sessionNotSureCount} marked 🤔 Not Sure • {sessionIdkCount} flagged 🤷 Honestly IDK
+                </p>
 
-              <div className="flex flex-wrap items-center justify-center gap-3">
-                <button
-                  onClick={() => {
-                    setQuizDeckScope("all");
-                    generateQuiz();
-                  }}
-                  className="px-6 py-2.5 rounded-xl bg-accent hover:bg-accent-hover text-white text-xs font-semibold flex items-center justify-center gap-2 transition-transform active:scale-95 shadow-neon-glow"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                  <span>Retake Grammar Quiz</span>
-                </button>
+                <div className="grid grid-cols-3 gap-3 mb-6">
+                  <div className="p-3 rounded-xl glass-panel">
+                    <span className="text-[10px] text-primary-muted block">Score</span>
+                    <span className="text-xl font-bold text-accent">{score} / {answeredCount}</span>
+                  </div>
+                  <div className="p-3 rounded-xl glass-panel">
+                    <span className="text-[10px] text-primary-muted block">Accuracy</span>
+                    <span className="text-xl font-bold text-emerald-400">{liveAccuracy}%</span>
+                  </div>
+                  <div className="p-3 rounded-xl glass-panel">
+                    <span className="text-[10px] text-primary-muted block">Best Streak</span>
+                    <span className="text-xl font-bold text-amber-400">{maxStreak}</span>
+                  </div>
+                </div>
 
-                {flaggedIds.length > 0 && (
+                <div className="flex flex-wrap items-center justify-center gap-3">
                   <button
-                    type="button"
-                    onClick={() => setQuizDeckScope("flagged")}
-                    className="px-5 py-2.5 rounded-xl bg-amber-500/20 border border-amber-400/50 text-amber-300 text-xs font-semibold"
+                    onClick={() => {
+                      setQuizDeckScope("all");
+                      generateQuiz();
+                    }}
+                    className="px-6 py-2.5 rounded-xl bg-accent hover:bg-accent-hover text-white text-xs font-semibold flex items-center justify-center gap-2 transition-transform active:scale-95 shadow-neon-glow"
                   >
-                    🚩 Review {flaggedIds.length} Flagged Items
+                    <RotateCcw className="w-4 h-4" />
+                    <span>Retake Grammar Quiz</span>
                   </button>
-                )}
+
+                  {flaggedIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setQuizDeckScope("flagged")}
+                      className="px-5 py-2.5 rounded-xl bg-amber-500/20 border border-amber-400/50 text-amber-300 text-xs font-semibold"
+                    >
+                      🚩 Review {flaggedIds.length} Flagged Items
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Number-by-Number Question & All 4 Options Breakdown */}
+              <div className="space-y-4 pt-5 border-t border-border-glass text-left">
+                <h4 className="text-sm font-bold text-primary">
+                  Number-by-Number Breakdown & Option Explanations
+                </h4>
+
+                {attemptRecords.map((rec, idx) => {
+                  const q = rec.question;
+                  const chosenOpt =
+                    rec.selectedOptionIndex !== null
+                      ? q.options[rec.selectedOptionIndex]
+                      : null;
+                  const isCorrect = Boolean(chosenOpt && chosenOpt.text === q.correctAnswer);
+
+                  return (
+                    <div
+                      key={`${q.id}_${idx}`}
+                      className={cn(
+                        "p-4 rounded-2xl border space-y-2.5",
+                        rec.answeredAsIdk
+                          ? "glass-panel border-amber-500/40"
+                          : isCorrect
+                            ? "glass-panel border-emerald-500/35"
+                            : "glass-panel border-rose-500/40"
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-2.5 py-0.5 rounded-lg bg-surface-card border border-border-glass text-xs font-mono font-bold text-primary">
+                            #{idx + 1}
+                          </span>
+                          {rec.answeredAsIdk ? (
+                            <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-bold">
+                              🤷 Honestly IDK
+                            </span>
+                          ) : isCorrect ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Correct
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-400 text-xs font-bold">
+                              <XCircle className="w-3.5 h-3.5" />
+                              Incorrect
+                            </span>
+                          )}
+                          {rec.isNotSureMarked && (
+                            <span className="px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 text-xs font-semibold">
+                              🤔 Marked Not Sure
+                            </span>
+                          )}
+                          <span className="px-2 py-0.5 rounded bg-accent/15 text-accent text-[11px] font-bold">
+                            {q.jlpt_level} • {q.targetCategory}
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            speakJapanese(`${q.sentencePre}${q.correctAnswer}${q.sentencePost}`)
+                          }
+                          className="p-1.5 rounded-lg glass-panel text-primary-muted hover:text-accent"
+                          title="Pronounce complete sentence"
+                        >
+                          <Volume2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <p className="font-jp text-base font-bold text-primary">
+                        {q.sentencePre}
+                        <span className="mx-1 px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                          {q.correctAnswer}
+                        </span>
+                        {q.sentencePost}
+                      </p>
+                      <p className="text-xs text-primary-muted italic">
+                        &ldquo;{q.sentenceTranslation}&rdquo;
+                      </p>
+                      <p className="text-xs text-accent font-medium">{q.ruleSummary}</p>
+
+                      <div className="space-y-1.5 pt-1">
+                        {q.options.map((opt, oIdx) => {
+                          const isRightOpt = opt.text === q.correctAnswer;
+                          const isUserPick = rec.selectedOptionIndex === oIdx;
+                          return (
+                            <div
+                              key={oIdx}
+                              className={cn(
+                                "p-2.5 rounded-xl border text-xs leading-relaxed",
+                                isRightOpt
+                                  ? "bg-emerald-500/15 border-emerald-500/45 text-emerald-200"
+                                  : isUserPick
+                                    ? "bg-rose-500/15 border-rose-500/45 text-rose-200"
+                                    : "bg-surface-card/60 border-border-glass text-primary-muted"
+                              )}
+                            >
+                              <div className="flex items-center justify-between font-bold mb-0.5">
+                                <span className="font-jp">
+                                  {oIdx + 1}. {opt.text}
+                                </span>
+                                <span className="text-[10px] uppercase">
+                                  {isRightOpt
+                                    ? "✓ Right Answer"
+                                    : isUserPick
+                                      ? "✗ Your Pick"
+                                      : ""}
+                                </span>
+                              </div>
+                              <div>{opt.explanation}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </motion.div>
           ) : currentQ ? (
@@ -926,7 +1091,6 @@ export const GrammarView: React.FC = () => {
                     <Volume2 className="w-3.5 h-3.5" />
                   </button>
 
-                  {/* Separate "Not Sure" Confidence Toggle Pill */}
                   {!isAnswered && (
                     <button
                       type="button"
@@ -985,7 +1149,6 @@ export const GrammarView: React.FC = () => {
                 </p>
               </div>
 
-              {/* 4 Fill-in Options */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {currentQ.options.map((opt, idx) => {
                   let stateClass = isNotSureMarked
@@ -1051,7 +1214,6 @@ export const GrammarView: React.FC = () => {
                 })}
               </div>
 
-              {/* 5th Anti-Gacha Action: "Honestly, I Don't Know" */}
               {!isAnswered && (
                 <button
                   type="button"
@@ -1063,7 +1225,6 @@ export const GrammarView: React.FC = () => {
                 </button>
               )}
 
-              {/* Diagnostic Breakdown */}
               <AnimatePresence>
                 {isAnswered && (
                   <motion.div
@@ -1115,7 +1276,7 @@ export const GrammarView: React.FC = () => {
                         <span>
                           {currentIndex < questions.length - 1 || countPreset === "infinite"
                             ? "Next Question"
-                            : "Finish Exam"}
+                            : "Finish & View Full Scorecard"}
                         </span>
                         <ArrowRight className="w-3.5 h-3.5" />
                       </button>

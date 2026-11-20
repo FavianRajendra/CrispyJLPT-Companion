@@ -3,6 +3,7 @@ dist/
 dist-ssr/
 *.local
 .DS_Store
+.env
 
 # Tauri & Rust build artifacts
 src-tauri/target/

@@ -8,9 +8,11 @@
     "dev:web": "vite",
     "build": "tsc && vite build",
     "build:tauri": "tauri build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "tauri": "tauri"
   },
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "@neondatabase/serverless": "^0.10.4",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-sql": "^2.2.0",

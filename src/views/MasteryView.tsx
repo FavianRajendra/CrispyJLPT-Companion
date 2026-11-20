@@ -7,6 +7,9 @@ import {
   Sparkles,
   Flame,
   TrendingUp,
+  Trophy,
+  BookOpen,
+  Layers,
 } from "lucide-react";
 import {
   Verb,
@@ -16,6 +19,7 @@ import {
   IndustryTrack,
   getDatabase,
 } from "../lib/db";
+import seedKanji from "../data/seed_kanji.json";
 
 export interface MasteryViewProps {
   verbs: Verb[];
@@ -31,6 +35,12 @@ interface DailyCheckinRow {
   checked_in_at: string;
 }
 
+interface SeedKanjiItem {
+  character: string;
+  jlpt_level: JlptLevel;
+  meanings: string[];
+}
+
 interface JlptOfficialThreshold {
   level: JlptLevel;
   totalMax: number;
@@ -39,7 +49,12 @@ interface JlptOfficialThreshold {
   langReadingMin: string;
   listeningMin: string;
   approxVocabKanji: string;
+  benchmarkKanji: number;
 }
+
+const ALL_SEED_KANJI = seedKanji as unknown as SeedKanjiItem[];
+const KANJI_RE = /[\u4e00-\u9faf\u3400-\u4dbf]/g;
+const MASTERY_THRESHOLD = 0.8; // 80% combined reading + meaning FSRS score
 
 const OFFICIAL_JLPT_GRADES: JlptOfficialThreshold[] = [
   {
@@ -50,6 +65,7 @@ const OFFICIAL_JLPT_GRADES: JlptOfficialThreshold[] = [
     langReadingMin: "19 / 120 pts",
     listeningMin: "19 / 60 pts",
     approxVocabKanji: "~800 words / ~100 kanji",
+    benchmarkKanji: 103,
   },
   {
     level: "N4",
@@ -59,6 +75,7 @@ const OFFICIAL_JLPT_GRADES: JlptOfficialThreshold[] = [
     langReadingMin: "38 / 120 pts",
     listeningMin: "19 / 60 pts",
     approxVocabKanji: "~1,500 words / ~300 kanji",
+    benchmarkKanji: 284,
   },
   {
     level: "N3",
@@ -68,6 +85,7 @@ const OFFICIAL_JLPT_GRADES: JlptOfficialThreshold[] = [
     langReadingMin: "19/60 Vocab • 19/60 Read",
     listeningMin: "19 / 60 pts",
     approxVocabKanji: "~3,750 words / ~650 kanji",
+    benchmarkKanji: 650,
   },
   {
     level: "N2",
@@ -77,6 +95,7 @@ const OFFICIAL_JLPT_GRADES: JlptOfficialThreshold[] = [
     langReadingMin: "19/60 Vocab • 19/60 Read",
     listeningMin: "19 / 60 pts",
     approxVocabKanji: "~6,000 words / ~1,000 kanji",
+    benchmarkKanji: 1020,
   },
   {
     level: "N1",
@@ -86,6 +105,7 @@ const OFFICIAL_JLPT_GRADES: JlptOfficialThreshold[] = [
     langReadingMin: "19/60 Vocab • 19/60 Read",
     listeningMin: "19 / 60 pts",
     approxVocabKanji: "~10,000 words / ~2,000 kanji",
+    benchmarkKanji: 2211,
   },
 ];
 
@@ -152,6 +172,13 @@ function safeIndustriesArray(raw: unknown): IndustryTrack[] {
   return [];
 }
 
+function extractKanjiFromItem(item: Verb): string[] {
+  if (Array.isArray(item.constituent_kanji) && item.constituent_kanji.length > 0) {
+    return Array.from(new Set(item.constituent_kanji));
+  }
+  return Array.from(new Set(item.kanji_form.match(KANJI_RE) || []));
+}
+
 export const MasteryView: React.FC<MasteryViewProps> = ({
   verbs = [],
   profile,
@@ -159,6 +186,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
   onUpdateProfile,
 }) => {
   const [checkins, setCheckins] = useState<DailyCheckinRow[]>([]);
+  const [trophyFilter, setTrophyFilter] = useState<"mastered" | "logged">("mastered");
   const [quizStats, setQuizStats] = useState<{
     totalAnswered: number;
     correctCount: number;
@@ -326,6 +354,141 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
 
   const fishMascot = getFishMascotForStreak(currentStreak);
 
+  // =========================================================================
+  // TROPHY & MILESTONE ENGINE (Kanji Logged, Kanji Mastered, Verbs Mastered)
+  // =========================================================================
+  const trophyMetrics = useMemo(() => {
+    const kanjiInfoMap = new Map<string, SeedKanjiItem>();
+    for (const k of ALL_SEED_KANJI) {
+      kanjiInfoMap.set(k.character, k);
+    }
+
+    // Track score sums & counts per kanji character from reviewed/scored items
+    const kanjiAccumulator = new Map<
+      string,
+      { totalScore: number; count: number; maxScore: number }
+    >();
+
+    let loggedVerbsCount = 0;
+    let masteredVerbsCount = 0;
+    let totalVerbsCount = 0;
+
+    let loggedOtherVocabCount = 0;
+    let masteredOtherVocabCount = 0;
+    let totalOtherVocabCount = 0;
+
+    for (const item of verbs) {
+      const cat = (item as Verb & { category?: string }).category || "verb";
+      const isVerb = cat === "verb";
+      if (isVerb) totalVerbsCount++;
+      else totalOtherVocabCount++;
+
+      const prog = safeGetProgress(progressMap, item.id);
+      if (!prog) continue;
+
+      const avgScore = (prog.reading_score + prog.meaning_score) / 2;
+      const isLogged = prog.repetitions > 0 || avgScore > 0;
+      const isMastered = avgScore >= MASTERY_THRESHOLD;
+
+      if (isLogged) {
+        if (isVerb) loggedVerbsCount++;
+        else loggedOtherVocabCount++;
+      }
+      if (isMastered) {
+        if (isVerb) masteredVerbsCount++;
+        else masteredOtherVocabCount++;
+      }
+
+      if (isLogged) {
+        const chars = extractKanjiFromItem(item);
+        for (const ch of chars) {
+          const prev = kanjiAccumulator.get(ch) || {
+            totalScore: 0,
+            count: 0,
+            maxScore: 0,
+          };
+          kanjiAccumulator.set(ch, {
+            totalScore: prev.totalScore + avgScore,
+            count: prev.count + 1,
+            maxScore: Math.max(prev.maxScore, avgScore),
+          });
+        }
+      }
+    }
+
+    const loggedKanjiList: Array<{
+      character: string;
+      jlpt_level: JlptLevel;
+      meaning: string;
+      scorePct: number;
+      isMastered: boolean;
+    }> = [];
+
+    for (const [char, stats] of kanjiAccumulator.entries()) {
+      const avg = stats.totalScore / stats.count;
+      // Consider a kanji mastered if its average score across studied words >= 80%
+      // OR its strongest studied word reaches >= 85%
+      const isMastered = avg >= MASTERY_THRESHOLD || stats.maxScore >= 0.85;
+      const meta = kanjiInfoMap.get(char);
+
+      loggedKanjiList.push({
+        character: char,
+        jlpt_level: meta?.jlpt_level || "N5",
+        meaning: meta?.meanings?.[0] || "Kanji",
+        scorePct: Math.round(Math.max(avg, stats.maxScore) * 100),
+        isMastered,
+      });
+    }
+
+    // Sort mastered first, then highest score
+    loggedKanjiList.sort(
+      (a, b) =>
+        Number(b.isMastered) - Number(a.isMastered) || b.scorePct - a.scorePct
+    );
+
+    const masteredKanjiList = loggedKanjiList.filter((k) => k.isMastered);
+
+    // Level-by-level breakdown (N5 -> N1)
+    const levelBreakdown = JLPT_LEVELS.map((lvl) => {
+      const totalKanjiInLevel =
+        ALL_SEED_KANJI.filter((k) => k.jlpt_level === lvl).length ||
+        OFFICIAL_JLPT_GRADES.find((g) => g.level === lvl)?.benchmarkKanji ||
+        100;
+      const masteredInLevel = masteredKanjiList.filter(
+        (k) => k.jlpt_level === lvl
+      ).length;
+      const loggedInLevel = loggedKanjiList.filter(
+        (k) => k.jlpt_level === lvl
+      ).length;
+
+      return {
+        level: lvl,
+        totalKanji: totalKanjiInLevel,
+        masteredKanji: masteredInLevel,
+        loggedKanji: loggedInLevel,
+        pct: Math.min(
+          100,
+          Math.round((masteredInLevel / Math.max(1, totalKanjiInLevel)) * 100)
+        ),
+      };
+    });
+
+    return {
+      loggedKanjiCount: loggedKanjiList.length,
+      masteredKanjiCount: masteredKanjiList.length,
+      totalSeedKanji: ALL_SEED_KANJI.length || 2211,
+      loggedVerbsCount,
+      masteredVerbsCount,
+      totalVerbsCount,
+      loggedOtherVocabCount,
+      masteredOtherVocabCount,
+      totalOtherVocabCount,
+      loggedKanjiList,
+      masteredKanjiList,
+      levelBreakdown,
+    };
+  }, [verbs, progressMap]);
+
   const analytics = useMemo(() => {
     const targetLvl = profile?.target_jlpt || "N5";
     const activeIndustries = safeIndustriesArray(profile?.target_industries);
@@ -422,8 +585,14 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
     });
   };
 
+  const displayedTrophyKanji =
+    trophyFilter === "mastered"
+      ? trophyMetrics.masteredKanjiList
+      : trophyMetrics.loggedKanjiList;
+
   return (
     <div className="max-w-5xl mx-auto space-y-5 pb-24 md:pb-10">
+      {/* 1. Daily Fish Streak Banner */}
       <div className="p-5 sm:p-6 rounded-3xl glass-card border border-accent/30 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
@@ -442,7 +611,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
               </div>
               <p className="text-xs text-primary-muted mt-0.5">
                 Today's activity: {todayReviews} / {profile?.daily_goal || 15}{" "}
-                verbs • Keep your fish swimming daily!
+                items • Keep your fish swimming daily!
               </p>
             </div>
           </div>
@@ -490,6 +659,207 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
         </div>
       </div>
 
+      {/* 2. NEW: Trophy & Milestone Showcase (Logged Kanji, Mastered Kanji, Mastered Verbs & Vocab) */}
+      <div className="p-5 sm:p-6 rounded-3xl glass-card border border-amber-400/30 space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-base sm:text-lg font-bold text-primary flex items-center gap-2">
+              <Trophy className="w-5 h-5 text-amber-400" />
+              <span>Your JLPT Trophy Cabinet & Mastery Milestones</span>
+            </h3>
+            <p className="text-xs text-primary-muted">
+              Calculated live from your FSRS reading & meaning scores (≥80% retention = Mastered)
+            </p>
+          </div>
+          <span className="px-3 py-1 rounded-full bg-amber-500/15 border border-amber-400/30 text-amber-300 text-xs font-bold">
+            {analytics.reviewedCount.toLocaleString()} Total Reviews Logged
+          </span>
+        </div>
+
+        {/* 4 Hero Milestone Cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/15 to-amber-600/5 border border-amber-400/35 space-y-1">
+            <div className="flex items-center justify-between text-xs font-semibold text-amber-300">
+              <span>Mastered Kanji</span>
+              <Trophy className="w-4 h-4" />
+            </div>
+            <div className="text-2xl sm:text-3xl font-black text-primary tabular-nums">
+              {trophyMetrics.masteredKanjiCount.toLocaleString()}
+              <span className="text-xs font-normal text-primary-muted ml-1">
+                / {trophyMetrics.totalSeedKanji.toLocaleString()}
+              </span>
+            </div>
+            <p className="text-[11px] text-primary-muted">
+              Characters ≥80% FSRS retention
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-sky-500/15 to-sky-600/5 border border-sky-400/35 space-y-1">
+            <div className="flex items-center justify-between text-xs font-semibold text-sky-300">
+              <span>Logged Kanji</span>
+              <BookOpen className="w-4 h-4" />
+            </div>
+            <div className="text-2xl sm:text-3xl font-black text-primary tabular-nums">
+              {trophyMetrics.loggedKanjiCount.toLocaleString()}
+              <span className="text-xs font-normal text-primary-muted ml-1">
+                chars
+              </span>
+            </div>
+            <p className="text-[11px] text-primary-muted">
+              Unique kanji encountered & scored
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/15 to-emerald-600/5 border border-emerald-400/35 space-y-1">
+            <div className="flex items-center justify-between text-xs font-semibold text-emerald-300">
+              <span>Mastered Verbs</span>
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
+            <div className="text-2xl sm:text-3xl font-black text-primary tabular-nums">
+              {trophyMetrics.masteredVerbsCount.toLocaleString()}
+              <span className="text-xs font-normal text-primary-muted ml-1">
+                / {trophyMetrics.totalVerbsCount.toLocaleString()}
+              </span>
+            </div>
+            <p className="text-[11px] text-primary-muted">
+              {trophyMetrics.loggedVerbsCount.toLocaleString()} verbs logged in FSRS
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-purple-500/15 to-purple-600/5 border border-purple-400/35 space-y-1">
+            <div className="flex items-center justify-between text-xs font-semibold text-purple-300">
+              <span>Mastered Vocab</span>
+              <Layers className="w-4 h-4" />
+            </div>
+            <div className="text-2xl sm:text-3xl font-black text-primary tabular-nums">
+              {trophyMetrics.masteredOtherVocabCount.toLocaleString()}
+              <span className="text-xs font-normal text-primary-muted ml-1">
+                / {trophyMetrics.totalOtherVocabCount.toLocaleString()}
+              </span>
+            </div>
+            <p className="text-[11px] text-primary-muted">
+              Nouns, adjectives & time words
+            </p>
+          </div>
+        </div>
+
+        {/* JLPT N5 -> N1 Kanji Mastery Progress Ladder */}
+        <div className="p-4 rounded-2xl glass-panel border border-border-glass space-y-3">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-bold text-primary">
+              Kanji Mastery Progress Across JLPT Levels (N5 → N1)
+            </span>
+            <span className="text-primary-muted">
+              Mastered / Total Level Kanji
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
+            {trophyMetrics.levelBreakdown.map((lvlStat) => {
+              const isCurrentTarget = lvlStat.level === profile?.target_jlpt;
+              return (
+                <div
+                  key={lvlStat.level}
+                  className={`p-3 rounded-xl border space-y-1.5 ${
+                    isCurrentTarget
+                      ? "bg-accent/15 border-accent"
+                      : "bg-surface-card/60 border-border-glass"
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-extrabold text-primary">
+                      {lvlStat.level}
+                    </span>
+                    <span className="font-bold text-accent tabular-nums">
+                      {lvlStat.pct}%
+                    </span>
+                  </div>
+                  <div className="h-2 rounded-full bg-surface-hover overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-accent transition-all duration-500"
+                      style={{ width: `${lvlStat.pct}%` }}
+                    />
+                  </div>
+                  <div className="text-[11px] text-primary-muted tabular-nums">
+                    <strong className="text-primary">
+                      {lvlStat.masteredKanji}
+                    </strong>{" "}
+                    / {lvlStat.totalKanji} mastered
+                  </div>
+                  <div className="text-[10px] text-primary-muted">
+                    ({lvlStat.loggedKanji} logged)
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Interactive Mastered & Logged Kanji Wall */}
+        <div className="space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 p-1 rounded-xl glass-panel border border-border-glass text-xs">
+              <button
+                type="button"
+                onClick={() => setTrophyFilter("mastered")}
+                className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                  trophyFilter === "mastered"
+                    ? "bg-amber-500 text-slate-950"
+                    : "text-primary-muted hover:text-primary"
+                }`}
+              >
+                🏆 Mastered Kanji Wall ({trophyMetrics.masteredKanjiCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setTrophyFilter("logged")}
+                className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                  trophyFilter === "logged"
+                    ? "bg-accent text-white"
+                    : "text-primary-muted hover:text-primary"
+                }`}
+              >
+                📘 All Logged Kanji ({trophyMetrics.loggedKanjiCount})
+              </button>
+            </div>
+
+            <span className="text-[11px] text-primary-muted">
+              Every kanji you master in Flashcards or Quiz is immortalized here
+            </span>
+          </div>
+
+          {displayedTrophyKanji.length === 0 ? (
+            <div className="p-6 rounded-2xl glass-panel border border-border-glass text-center text-xs text-primary-muted">
+              {trophyFilter === "mastered"
+                ? "No kanji at ≥80% mastery yet — rate words 'Easy' in Present or ace them in Quiz to unlock your first kanji trophy!"
+                : "Start reviewing words in Present or Quiz to begin logging kanji characters here."}
+            </div>
+          ) : (
+            <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-2 max-h-[240px] overflow-y-auto pr-1">
+              {displayedTrophyKanji.map((item) => (
+                <div
+                  key={item.character}
+                  title={`${item.character} (${item.jlpt_level}) — ${item.meaning} • ${item.scorePct}% mastery`}
+                  className={`p-2 rounded-xl border text-center flex flex-col items-center justify-center ${
+                    item.isMastered
+                      ? "bg-amber-500/15 border-amber-400/50 text-amber-200"
+                      : "glass-panel border-border-glass text-primary"
+                  }`}
+                >
+                  <span className="font-jp text-xl font-extrabold leading-tight">
+                    {item.character}
+                  </span>
+                  <span className="text-[9px] font-bold opacity-85">
+                    {item.scorePct}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 3. JLPT Passability Estimator & Exam Calibration */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 p-5 sm:p-6 rounded-3xl glass-card border border-border-glass space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -601,25 +971,25 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3.5 rounded-2xl glass-panel border border-border-glass">
               <div className="text-xs text-primary-muted">
-                {analytics.targetLvl} Verb Mastery
+                {analytics.targetLvl} Corpus Retention
               </div>
               <div className="text-xl font-bold text-accent tabular-nums mt-0.5">
                 {analytics.jlptReadinessPct}%
               </div>
               <div className="text-[11px] text-primary-muted">
-                {analytics.targetCount} target-level verbs
+                {analytics.targetCount.toLocaleString()} target-level items
               </div>
             </div>
 
             <div className="p-3.5 rounded-2xl glass-panel border border-border-glass">
               <div className="text-xs text-primary-muted">
-                Industry Track Mastery
+                Industry Track Retention
               </div>
               <div className="text-xl font-bold text-cyan-400 tabular-nums mt-0.5">
                 {analytics.industryReadinessPct}%
               </div>
               <div className="text-[11px] text-primary-muted">
-                {analytics.reviewedCount} total verbs studied
+                {analytics.reviewedCount.toLocaleString()} total items studied
               </div>
             </div>
           </div>
@@ -657,7 +1027,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
 
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-primary-muted">
-              Daily Verb Goal: {profile?.daily_goal || 15} verbs/day
+              Daily Study Goal: {profile?.daily_goal || 15} items/day
             </label>
             <input
               type="range"
@@ -705,6 +1075,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
         </div>
       </div>
 
+      {/* 4. Official JLPT Passing Grades Reference Table */}
       <div className="p-5 rounded-3xl glass-card border border-border-glass space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold text-primary flex items-center gap-2">

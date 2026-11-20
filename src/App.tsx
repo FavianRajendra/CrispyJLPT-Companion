@@ -10,12 +10,14 @@ import {
   Keyboard,
   X,
   BookMarked,
+  Languages,
 } from "lucide-react";
 import { PresentView } from "./views/PresentView";
 import { QuizView } from "./views/QuizView";
 import { GrammarView } from "./views/GrammarView";
 import { DirectoryView } from "./views/DirectoryView";
 import { MasteryView } from "./views/MasteryView";
+import { KanjiLabView } from "./views/KanjiLabView";
 import { KanjiNoteWidget } from "./components/KanjiNoteWidget";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import {
@@ -27,7 +29,7 @@ import {
 import { getDecoratedVerbs, VerbWithProgress } from "./lib/mastery";
 import { cn } from "./lib/utils";
 
-type NavTab = "present" | "quiz" | "grammar" | "directory" | "mastery";
+type NavTab = "present" | "quiz" | "grammar" | "kanji" | "directory" | "mastery";
 
 export function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("present");
@@ -129,6 +131,7 @@ export function App() {
     { id: "present", label: "Present", icon: PlaySquare },
     { id: "quiz", label: "Quiz", icon: HelpCircle },
     { id: "grammar", label: "Grammar", icon: BookMarked },
+    { id: "kanji", label: "Kanji Lab", icon: Languages },
     { id: "directory", label: "Directory", icon: FolderKanban },
     { id: "mastery", label: "Mastery", icon: Award },
   ] as const;
@@ -274,6 +277,18 @@ export function App() {
               </motion.div>
             )}
 
+            {activeTab === "kanji" && (
+              <motion.div
+                key="kanji"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2 }}
+              >
+                <KanjiLabView />
+              </motion.div>
+            )}
+
             {activeTab === "directory" && (
               <motion.div
                 key="directory"
@@ -286,7 +301,6 @@ export function App() {
                   verbs={verbs}
                   profile={profile}
                   progressMap={progressMap}
-                  onVerbUpdated={loadAppState}
                 />
               </motion.div>
             )}
@@ -311,7 +325,7 @@ export function App() {
         </ErrorBoundary>
       </main>
 
-      {/* Mobile Floating Bottom Glass Bar (5 Tabs) */}
+      {/* Mobile Floating Bottom Glass Bar (6 Tabs) */}
       <nav className="md:hidden fixed bottom-4 left-3 right-3 z-40 p-2 rounded-2xl glass-card border border-border-glass shadow-glass flex items-center justify-around">
         {navItems.map((item) => {
           const Icon = item.icon;
@@ -321,12 +335,12 @@ export function App() {
               key={item.id}
               onClick={() => setActiveTab(item.id)}
               className={cn(
-                "relative min-h-[var(--touch-target-min)] min-w-[var(--touch-target-min)] flex flex-col items-center justify-center px-2 py-1 rounded-xl text-[10px] font-semibold transition-all",
+                "relative min-h-[var(--touch-target-min)] min-w-[var(--touch-target-min)] flex flex-col items-center justify-center px-1.5 py-1 rounded-xl text-[10px] font-semibold transition-all",
                 isActive ? "text-accent" : "text-primary-muted hover:text-primary"
               )}
             >
               <Icon className="w-4 h-4 mb-0.5" />
-              <span>{item.label}</span>
+              <span className="truncate max-w-[54px]">{item.label}</span>
               {isActive && (
                 <motion.div
                   layoutId="active-mobile-pill"

@@ -3,7 +3,7 @@ import type { GrammarQuestion } from "../data/grammar_corpus";
 import type { KanjiGloss } from "./kanjiAnnotator";
 
 const KANJI_RE = /[\u4e00-\u9faf\u3400-\u4dbf\uf900-\ufaff々]/g;
-const KANJI_COMPOUND_RE = /[\u4e00-\u9faf\u3400-\u4dbf\uf900-\ufaff々]+/g;
+// const KANJI_COMPOUND_RE = /[\u4e00-\u9faf\u3400-\u4dbf\uf900-\ufaff々]+/g;
 
 interface ScrapeTarget {
   query: string;

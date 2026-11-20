@@ -1,3 +1,4 @@
+import { createClient, Client as LibsqlClient } from "@libsql/client/web";
 import seedVerbs from "../data/seed_verbs.json";
 
 export interface RubySegment {
@@ -8,6 +9,7 @@ export interface RubySegment {
 export type JlptLevel = "N5" | "N4" | "N3" | "N2" | "N1";
 export type VerbGroup = "Ichidan" | "Godan" | "Irregular";
 export type IndustryTrack = "general" | "it" | "finance" | "fnb" | "healthcare" | "manufacturing";
+export type ItemCategory = "verb" | "noun" | "adjective" | "time_number" | "adverb";
 
 export interface Verb {
   id: number;
@@ -17,6 +19,7 @@ export interface Verb {
   meanings: string[];
   jlpt_level: JlptLevel;
   verb_group: VerbGroup;
+  category?: ItemCategory;
   constituent_kanji: string[];
   industry_tags: IndustryTrack[];
   is_core_jlpt: number;
@@ -110,9 +113,345 @@ export interface AppDatabase {
   select<T>(query: string, bindValues?: any[]): Promise<T>;
 }
 
-// Global singleton instance
+export interface SyncStatus {
+  configured: boolean;
+  isSyncing: boolean;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+}
+
+// Global singleton instances
 let dbInstance: AppDatabase | null = null;
 let initPromise: Promise<AppDatabase> | null = null;
+let tursoClient: LibsqlClient | null = null;
+let syncTimer: ReturnType<typeof setTimeout> | null = null;
+let syncInFlight: Promise<boolean> | null = null;
+
+const syncStatus: SyncStatus = {
+  configured: false,
+  isSyncing: false,
+  lastSyncedAt:
+    typeof localStorage !== "undefined" ? localStorage.getItem("turso_last_synced_at") : null,
+  lastError: null,
+};
+
+function getTursoClient(): LibsqlClient | null {
+  if (tursoClient) return tursoClient;
+
+  const rawUrl = (import.meta as any).env?.VITE_TURSO_DATABASE_URL?.trim();
+  const authToken = (import.meta as any).env?.VITE_TURSO_AUTH_TOKEN?.trim();
+
+  if (!rawUrl || !authToken) {
+    syncStatus.configured = false;
+    return null;
+  }
+
+  // @libsql/client/web expects https:// instead of libsql://
+  const httpUrl = rawUrl.replace(/^libsql:\/\//i, "https://");
+
+  tursoClient = createClient({
+    url: httpUrl,
+    authToken,
+  });
+  syncStatus.configured = true;
+  return tursoClient;
+}
+
+export function getSyncStatus(): SyncStatus {
+  getTursoClient();
+  return { ...syncStatus };
+}
+
+function scheduleBackgroundSync(delayMs = 2000) {
+  if (!getTursoClient()) return;
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    syncWithTurso().catch((err) => {
+      console.warn("[Turso Sync] Background sync skipped:", err);
+    });
+  }, delayMs);
+}
+
+/**
+ * Bidirectional sync between local SQLite and Turso Cloud:
+ * 1. Pushes local user_profiles, dirty user_verb_progress (sync_dirty = 1), and quiz_history.
+ * 2. Pulls remote updates from other devices and merges newer timestamps into local SQLite.
+ */
+export async function syncWithTurso(): Promise<boolean> {
+  const remote = getTursoClient();
+  if (!remote) return false;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return false;
+  if (syncInFlight) return syncInFlight;
+
+  syncInFlight = (async () => {
+    syncStatus.isSyncing = true;
+    syncStatus.lastError = null;
+
+    try {
+      const local = await getDatabase();
+
+      // Ensure local quiz_history exists before syncing it
+      await local.execute(`
+        CREATE TABLE IF NOT EXISTS quiz_history (
+          id TEXT PRIMARY KEY,
+          verb_id INTEGER NOT NULL,
+          kanji_form TEXT NOT NULL,
+          furigana_reading TEXT NOT NULL,
+          correct_meaning TEXT NOT NULL,
+          jlpt_level TEXT NOT NULL,
+          quiz_mode TEXT NOT NULL,
+          is_correct INTEGER NOT NULL,
+          is_idk INTEGER NOT NULL DEFAULT 0,
+          is_not_sure INTEGER NOT NULL DEFAULT 0,
+          selected_label TEXT NOT NULL,
+          selected_kanji TEXT NOT NULL,
+          selected_furigana TEXT NOT NULL,
+          selected_meaning TEXT NOT NULL,
+          correct_label TEXT NOT NULL,
+          answered_at TEXT NOT NULL
+        );
+      `);
+
+      // 1. Sync User Profile (Last-Write-Wins via updated_at)
+      const localProfiles = await local.select<any[]>(
+        "SELECT * FROM user_profiles LIMIT 1;"
+      );
+      const localProf = localProfiles[0]
+        ? normalizeUserProfile(localProfiles[0])
+        : normalizeUserProfile(null);
+      const userId = localProf.id;
+
+      const remoteProfRes = await remote.execute({
+        sql: "SELECT * FROM user_profiles WHERE id = ? LIMIT 1;",
+        args: [userId],
+      });
+      const remoteProfRow = remoteProfRes.rows?.[0] as any;
+
+      if (!remoteProfRow || String(localProf.updated_at) > String(remoteProfRow.updated_at || "")) {
+        await remote.execute({
+          sql: `INSERT INTO user_profiles (
+                  id, current_jlpt, target_jlpt, daily_goal, target_industries, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  current_jlpt = excluded.current_jlpt,
+                  target_jlpt = excluded.target_jlpt,
+                  daily_goal = excluded.daily_goal,
+                  target_industries = excluded.target_industries,
+                  updated_at = excluded.updated_at;`,
+          args: [
+            localProf.id,
+            localProf.current_jlpt,
+            localProf.target_jlpt,
+            localProf.daily_goal,
+            JSON.stringify(localProf.target_industries ?? []),
+            localProf.updated_at,
+          ],
+        });
+      } else if (String(remoteProfRow.updated_at) > String(localProf.updated_at)) {
+        const merged = normalizeUserProfile(remoteProfRow);
+        await local.execute(
+          `UPDATE user_profiles
+           SET current_jlpt = ?,
+               target_jlpt = ?,
+               daily_goal = ?,
+               target_industries = ?,
+               updated_at = ?
+           WHERE id = ?;`,
+          [
+            merged.current_jlpt,
+            merged.target_jlpt,
+            merged.daily_goal,
+            JSON.stringify(merged.target_industries),
+            merged.updated_at,
+            merged.id,
+          ]
+        );
+      }
+
+      // 2. Push dirty local verb progress rows to Turso
+      const dirtyRows = await local.select<VerbProgress[]>(
+        "SELECT * FROM user_verb_progress WHERE sync_dirty = 1;"
+      );
+
+      if (dirtyRows.length > 0) {
+        const stmts = dirtyRows.map((row) => ({
+          sql: `INSERT INTO user_verb_progress (
+                  user_id, verb_id, reading_score, meaning_score, stability_days,
+                  repetitions, lapses, last_reviewed_at, next_review_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, verb_id) DO UPDATE SET
+                  reading_score = excluded.reading_score,
+                  meaning_score = excluded.meaning_score,
+                  stability_days = excluded.stability_days,
+                  repetitions = excluded.repetitions,
+                  lapses = excluded.lapses,
+                  last_reviewed_at = excluded.last_reviewed_at,
+                  next_review_at = excluded.next_review_at,
+                  updated_at = excluded.updated_at
+                WHERE excluded.updated_at >= user_verb_progress.updated_at;`,
+          args: [
+            userId,
+            row.verb_id,
+            row.reading_score,
+            row.meaning_score,
+            row.stability_days,
+            row.repetitions,
+            row.lapses,
+            row.last_reviewed_at,
+            row.next_review_at,
+            row.updated_at,
+          ],
+        }));
+
+        await remote.batch(stmts, "write");
+
+        const syncedIds = dirtyRows.map((r) => r.verb_id);
+        const placeholders = syncedIds.map(() => "?").join(", ");
+        await local.execute(
+          `UPDATE user_verb_progress SET sync_dirty = 0 WHERE verb_id IN (${placeholders});`,
+          syncedIds
+        );
+      }
+
+      // 3. Pull newer verb progress rows from Turso (written by your other devices)
+      const lastSynced = syncStatus.lastSyncedAt || "1970-01-01T00:00:00.000Z";
+      const remoteProgressRes = await remote.execute({
+        sql: `SELECT * FROM user_verb_progress
+              WHERE user_id = ? AND updated_at > ?
+              ORDER BY updated_at ASC;`,
+        args: [userId, lastSynced],
+      });
+
+      for (const r of (remoteProgressRes.rows || []) as any[]) {
+        const verbId = Number(r.verb_id);
+        const localMatch = await local.select<VerbProgress[]>(
+          "SELECT updated_at FROM user_verb_progress WHERE verb_id = ? LIMIT 1;",
+          [verbId]
+        );
+        const localUpdated = localMatch[0]?.updated_at || "";
+        const remoteUpdated = String(r.updated_at || "");
+
+        if (remoteUpdated > localUpdated) {
+          await local.execute(
+            `INSERT INTO user_verb_progress (
+              verb_id, reading_score, meaning_score, stability_days,
+              repetitions, lapses, last_reviewed_at, next_review_at, sync_dirty, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+            ON CONFLICT(verb_id) DO UPDATE SET
+              reading_score = excluded.reading_score,
+              meaning_score = excluded.meaning_score,
+              stability_days = excluded.stability_days,
+              repetitions = excluded.repetitions,
+              lapses = excluded.lapses,
+              last_reviewed_at = excluded.last_reviewed_at,
+              next_review_at = excluded.next_review_at,
+              sync_dirty = 0,
+              updated_at = excluded.updated_at;`,
+            [
+              verbId,
+              Number(r.reading_score ?? 0),
+              Number(r.meaning_score ?? 0),
+              Number(r.stability_days ?? 1.0),
+              Number(r.repetitions ?? 0),
+              Number(r.lapses ?? 0),
+              r.last_reviewed_at ? String(r.last_reviewed_at) : null,
+              r.next_review_at ? String(r.next_review_at) : null,
+              remoteUpdated,
+            ]
+          );
+        }
+      }
+
+      // 4. Push recent local quiz_history entries & pull missing remote ones
+      const recentLocalHistory = await local.select<any[]>(
+        "SELECT * FROM quiz_history ORDER BY answered_at DESC LIMIT 100;"
+      );
+      if (recentLocalHistory.length > 0) {
+        const historyStmts = recentLocalHistory.map((h) => ({
+          sql: `INSERT OR IGNORE INTO quiz_history (
+                  id, user_id, verb_id, kanji_form, furigana_reading, correct_meaning,
+                  jlpt_level, quiz_mode, is_correct, is_idk, is_not_sure,
+                  selected_label, selected_kanji, selected_furigana, selected_meaning,
+                  correct_label, answered_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          args: [
+            h.id,
+            userId,
+            h.verb_id,
+            h.kanji_form,
+            h.furigana_reading,
+            h.correct_meaning,
+            h.jlpt_level,
+            h.quiz_mode,
+            h.is_correct,
+            h.is_idk ?? 0,
+            h.is_not_sure ?? 0,
+            h.selected_label,
+            h.selected_kanji,
+            h.selected_furigana,
+            h.selected_meaning,
+            h.correct_label,
+            h.answered_at,
+          ],
+        }));
+        await remote.batch(historyStmts, "write");
+      }
+
+      const remoteHistoryRes = await remote.execute({
+        sql: `SELECT * FROM quiz_history
+              WHERE user_id = ? AND answered_at > ?
+              ORDER BY answered_at DESC LIMIT 150;`,
+        args: [userId, lastSynced],
+      });
+
+      for (const h of (remoteHistoryRes.rows || []) as any[]) {
+        await local.execute(
+          `INSERT OR IGNORE INTO quiz_history (
+            id, verb_id, kanji_form, furigana_reading, correct_meaning,
+            jlpt_level, quiz_mode, is_correct, is_idk, is_not_sure,
+            selected_label, selected_kanji, selected_furigana, selected_meaning,
+            correct_label, answered_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          [
+            String(h.id),
+            Number(h.verb_id),
+            String(h.kanji_form),
+            String(h.furigana_reading),
+            String(h.correct_meaning),
+            String(h.jlpt_level),
+            String(h.quiz_mode),
+            Number(h.is_correct ?? 0),
+            Number(h.is_idk ?? 0),
+            Number(h.is_not_sure ?? 0),
+            String(h.selected_label),
+            String(h.selected_kanji),
+            String(h.selected_furigana),
+            String(h.selected_meaning),
+            String(h.correct_label),
+            String(h.answered_at),
+          ]
+        );
+      }
+
+      const nowIso = new Date().toISOString();
+      syncStatus.lastSyncedAt = nowIso;
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem("turso_last_synced_at", nowIso);
+      }
+
+      return true;
+    } catch (err: any) {
+      syncStatus.lastError = err?.message || "Sync failed";
+      console.warn("[Turso Sync] Failed:", err);
+      return false;
+    } finally {
+      syncStatus.isSyncing = false;
+      syncInFlight = null;
+    }
+  })();
+
+  return syncInFlight;
+}
 
 // IndexedDB Helper for browser WASM persistence
 const IDB_NAME = "jlpt_verbs_browser_db";
@@ -172,6 +511,13 @@ function isTauriEnvironment(): boolean {
   );
 }
 
+function isUserMutationQuery(query: string): boolean {
+  return (
+    /\b(user_verb_progress|user_profiles|quiz_history)\b/i.test(query) &&
+    /^\s*(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(query)
+  );
+}
+
 async function createTauriDatabase(): Promise<AppDatabase> {
   const { default: Database } = await import("@tauri-apps/plugin-sql");
   const nativeDb = await withTimeout(
@@ -181,7 +527,11 @@ async function createTauriDatabase(): Promise<AppDatabase> {
   );
   return {
     async execute(query: string, bindValues: any[] = []): Promise<any> {
-      return nativeDb.execute(query, bindValues);
+      const res = await nativeDb.execute(query, bindValues);
+      if (isUserMutationQuery(query)) {
+        scheduleBackgroundSync(1500);
+      }
+      return res;
     },
     async select<T>(query: string, bindValues: any[] = []): Promise<T> {
       return nativeDb.select<T>(query, bindValues);
@@ -229,6 +579,9 @@ async function createBrowserDatabase(): Promise<AppDatabase> {
     async execute(query: string, bindValues: any[] = []): Promise<any> {
       db.run(query, bindValues);
       schedulePersist();
+      if (isUserMutationQuery(query)) {
+        scheduleBackgroundSync(1500);
+      }
       return { rowsAffected: 1 };
     },
     async select<T>(query: string, bindValues: any[] = []): Promise<T> {
@@ -266,6 +619,9 @@ export async function getDatabase(): Promise<AppDatabase> {
     await initializeSchema(db);
     dbInstance = db;
     console.log("[DB] Initialization complete.");
+
+    // Trigger an initial non-blocking sync on startup
+    scheduleBackgroundSync(500);
     return db;
   })();
 
@@ -279,11 +635,11 @@ export async function getDatabase(): Promise<AppDatabase> {
 
 async function seedCorpusInBatches(db: AppDatabase): Promise<void> {
   const verbs = seedVerbs as any[];
-  const BATCH_SIZE = 100; // 100 rows * 10 cols = 1,000 bind parameters per query
+  const BATCH_SIZE = 90; // 90 rows * 11 cols = 990 bind parameters per query
 
   for (let i = 0; i < verbs.length; i += BATCH_SIZE) {
     const chunk = verbs.slice(i, i + BATCH_SIZE);
-    const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+    const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
     const params: any[] = [];
 
     for (const v of chunk) {
@@ -295,6 +651,7 @@ async function seedCorpusInBatches(db: AppDatabase): Promise<void> {
         typeof v.meanings === "string" ? v.meanings : JSON.stringify(v.meanings),
         v.jlpt_level,
         v.verb_group,
+        v.category || "verb",
         typeof v.constituent_kanji === "string"
           ? v.constituent_kanji
           : JSON.stringify(v.constituent_kanji),
@@ -306,7 +663,7 @@ async function seedCorpusInBatches(db: AppDatabase): Promise<void> {
     await db.execute(
       `INSERT OR IGNORE INTO verbs (
         id, kanji_form, furigana_reading, ruby_segments, meanings,
-        jlpt_level, verb_group, constituent_kanji, industry_tags, is_core_jlpt
+        jlpt_level, verb_group, category, constituent_kanji, industry_tags, is_core_jlpt
       ) VALUES ${placeholders};`,
       params
     );
@@ -314,7 +671,7 @@ async function seedCorpusInBatches(db: AppDatabase): Promise<void> {
 }
 
 async function initializeSchema(db: AppDatabase): Promise<void> {
-  // 1. Verbs Table
+  // 1. Verbs & Vocabulary Table
   await db.execute(`
     CREATE TABLE IF NOT EXISTS verbs (
       id INTEGER PRIMARY KEY,
@@ -324,11 +681,19 @@ async function initializeSchema(db: AppDatabase): Promise<void> {
       meanings TEXT NOT NULL,
       jlpt_level TEXT NOT NULL,
       verb_group TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'verb',
       constituent_kanji TEXT NOT NULL,
       industry_tags TEXT NOT NULL,
       is_core_jlpt INTEGER NOT NULL DEFAULT 1
     );
   `);
+
+  // Non-destructive column migration for existing local SQLite databases
+  try {
+    await db.execute(`ALTER TABLE verbs ADD COLUMN category TEXT NOT NULL DEFAULT 'verb';`);
+  } catch {
+    // Column already exists
+  }
 
   // 2. User Profiles Table
   await db.execute(`
@@ -364,8 +729,33 @@ async function initializeSchema(db: AppDatabase): Promise<void> {
   const count = existingVerbs[0]?.count || 0;
 
   if (count < (seedVerbs as any[]).length) {
-    console.log(`[DB] Seeding corpus (${count} -> ${(seedVerbs as any[]).length} verbs)...`);
+    console.log(`[DB] Seeding corpus (${count} -> ${(seedVerbs as any[]).length} items)...`);
     await seedCorpusInBatches(db);
+  }
+
+  // Backfill category column on existing rows if any non-verb items are still tagged 'verb'
+  const nonVerbItems = (seedVerbs as any[]).filter((v) => v.category && v.category !== "verb");
+  if (nonVerbItems.length > 0) {
+    const sampleCheck = await db.select<any[]>(
+      "SELECT COUNT(*) as count FROM verbs WHERE category != 'verb';"
+    );
+    if ((sampleCheck[0]?.count || 0) === 0) {
+      const byCat = new Map<string, number[]>();
+      for (const v of nonVerbItems) {
+        const list = byCat.get(v.category) || [];
+        list.push(v.id);
+        byCat.set(v.category, list);
+      }
+      for (const [cat, ids] of byCat.entries()) {
+        for (let i = 0; i < ids.length; i += 500) {
+          const slice = ids.slice(i, i + 500);
+          await db.execute(
+            `UPDATE verbs SET category = ? WHERE id IN (${slice.join(",")});`,
+            [cat]
+          );
+        }
+      }
+    }
   }
 
   // Ensure default profile exists

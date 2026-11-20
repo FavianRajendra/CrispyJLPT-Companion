@@ -249,8 +249,8 @@ export const QuizView: React.FC<QuizViewProps> = ({
   const [sessionLength, setSessionLength] = useState<SessionLength>(20);
   const [selectedLevels, setSelectedLevels] = useState<JlptLevel[]>([]);
   const [showFurigana, setShowFurigana] = useState<boolean>(true);
+  const [showSessionSummary, setShowSessionSummary] = useState<boolean>(false);
 
-  // Keep parent props in refs so parent updates NEVER trigger a session reset
   const progressMapRef = useRef(progressMap);
   progressMapRef.current = progressMap;
 
@@ -278,7 +278,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
     return currentVerbs;
   }, []);
 
-  // Build initial question once on mount — NO reactive useEffect watching restartSession!
   const [sessionRecords, setSessionRecords] = useState<SessionQuestionRecord[]>(() => {
     const initialPool = verbs && verbs.length >= 4 ? verbs : [];
     const first = createQuestionFromPool(
@@ -314,7 +313,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
     return s;
   });
 
-  // Populate only if `verbs` loaded asynchronously after mount while sessionRecords is still empty
   useEffect(() => {
     if (sessionRecords.length === 0 && verbs && verbs.length >= 4) {
       const pool = getFilteredPool(selectedLevels);
@@ -397,7 +395,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
     loadQuizHistory();
   }, [loadQuizHistory]);
 
-  // Explicit session starter — ONLY runs when user clicks JLPT Level, Quiz Mode, or Restart
   const startNewSessionWith = useCallback(
     (nextLevels: JlptLevel[], nextMode: QuizMode) => {
       const emptySet = new Set<number>();
@@ -406,6 +403,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
       setNotSureCount(0);
       setIdkCount(0);
       setStreak(0);
+      setBestStreak(0);
+      setShowSessionSummary(false);
+
       const pool = getFilteredPool(nextLevels);
       const first = createQuestionFromPool(
         pool,
@@ -448,6 +448,11 @@ export const QuizView: React.FC<QuizViewProps> = ({
   const handleChangeQuizMode = (nextMode: QuizMode) => {
     setQuizMode(nextMode);
     startNewSessionWith(selectedLevels, nextMode);
+  };
+
+  const handleChangeSessionLength = (nextLen: SessionLength) => {
+    setSessionLength(nextLen);
+    startNewSessionWith(selectedLevels, quizMode);
   };
 
   const setCurrentNotSure = (updater: boolean | ((prev: boolean) => boolean)) => {
@@ -610,7 +615,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
     }
   };
 
-  // Locks the selected answer on screen — NEVER advances until user clicks Next Question
   const handleSelectOption = async (option: QuizOption) => {
     if (!currentQuestion || isCurrentAnswered) return;
 
@@ -649,7 +653,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
     );
   };
 
-  // Locks IDK state on screen — NEVER advances until user clicks Next Question
   const handleHonestlyDontKnow = async () => {
     if (!currentQuestion || isCurrentAnswered) return;
 
@@ -696,7 +699,12 @@ export const QuizView: React.FC<QuizViewProps> = ({
     }
 
     if (!isCurrentAnswered) return;
-    if (sessionLength > 0 && questionsAnswered >= sessionLength) return;
+
+    // Strictly stop when exact sessionLength is reached and show full scorecard
+    if (sessionLength > 0 && questionsAnswered >= sessionLength) {
+      setShowSessionSummary(true);
+      return;
+    }
 
     const nextUsed = new Set(usedVerbIds);
     const pool = getFilteredPool(selectedLevels);
@@ -733,7 +741,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
   ]);
 
   useEffect(() => {
-    if (subView !== "quiz") return;
+    if (subView !== "quiz" || showSessionSummary) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (
         e.target instanceof HTMLInputElement ||
@@ -829,7 +837,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
   );
 
   const isReviewingPrevious = activeIndex < sessionRecords.length - 1;
-  const isSessionComplete =
+  const isFinalQuestionReached =
     sessionLength > 0 &&
     questionsAnswered >= sessionLength &&
     isCurrentAnswered &&
@@ -889,7 +897,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
           </button>
         </div>
 
-        {/* Furigana Visibility Toggle */}
         <button
           type="button"
           onClick={() => setShowFurigana((prev) => !prev)}
@@ -980,7 +987,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                   <button
                     key={len}
                     type="button"
-                    onClick={() => setSessionLength(len)}
+                    onClick={() => handleChangeSessionLength(len)}
                     className={`px-2.5 py-1 rounded-lg font-semibold tabular-nums transition-colors ${
                       sessionLength === len
                         ? "bg-accent/20 text-accent border border-accent/40"
@@ -1026,10 +1033,192 @@ export const QuizView: React.FC<QuizViewProps> = ({
             </div>
           </div>
 
-          {/* Active Question Card */}
-          {currentQuestion ? (
+          {/* =====================================================================
+              COMPLETE END-OF-QUIZ SCORECARD & NUMBER-BY-NUMBER OPTION EXPLANATIONS
+              ===================================================================== */}
+          {showSessionSummary ? (
             <div className="p-6 sm:p-8 rounded-3xl glass-card border border-border-glass space-y-6">
-              {/* Card Metadata, Step Counter, Not Sure Flag & Listen Button */}
+              <div className="text-center space-y-2">
+                <div className="w-16 h-16 mx-auto rounded-full bg-accent/20 border border-accent/40 flex items-center justify-center text-accent shadow-neon-glow">
+                  <Award className="w-8 h-8" />
+                </div>
+                <h2 className="text-2xl font-bold text-primary">
+                  Quiz Session Complete!
+                </h2>
+                <p className="text-xs text-primary-muted">
+                  Full number-by-number scorecard & option breakdown for all {sessionRecords.length} questions
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                <div className="p-3.5 rounded-2xl glass-panel border border-border-glass">
+                  <span className="text-[11px] text-primary-muted block">Final Score</span>
+                  <span className="text-xl font-bold text-emerald-400 tabular-nums">
+                    {correctCount} / {questionsAnswered}
+                  </span>
+                </div>
+                <div className="p-3.5 rounded-2xl glass-panel border border-border-glass">
+                  <span className="text-[11px] text-primary-muted block">Accuracy</span>
+                  <span className="text-xl font-bold text-accent tabular-nums">
+                    {accuracyPct}%
+                  </span>
+                </div>
+                <div className="p-3.5 rounded-2xl glass-panel border border-border-glass">
+                  <span className="text-[11px] text-primary-muted block">Best Streak</span>
+                  <span className="text-xl font-bold text-amber-400 tabular-nums">
+                    {bestStreak}
+                  </span>
+                </div>
+                <div className="p-3.5 rounded-2xl glass-panel border border-border-glass">
+                  <span className="text-[11px] text-primary-muted block">Flags</span>
+                  <span className="text-xs font-bold text-primary block mt-1">
+                    🤔 {notSureCount} • 🤷 {idkCount}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowSessionSummary(false)}
+                  className="min-h-[42px] px-4 py-2 rounded-xl glass-panel border border-border-glass text-xs font-semibold text-primary hover:border-accent/60"
+                >
+                  Back to Question Cards
+                </button>
+                <button
+                  type="button"
+                  onClick={() => startNewSessionWith(selectedLevels, quizMode)}
+                  className="min-h-[42px] px-6 py-2 rounded-xl bg-accent text-white text-xs font-semibold flex items-center gap-2 shadow-neon-glow hover:opacity-95"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Start New {sessionLength > 0 ? `${sessionLength}-Question` : ""} Quiz</span>
+                </button>
+              </div>
+
+              {/* Number-by-Number Question & All 4 Options Breakdown */}
+              <div className="space-y-4 pt-4 border-t border-border-glass">
+                <h3 className="text-sm font-bold text-primary">
+                  Number-by-Number Breakdown & Option Explanations
+                </h3>
+
+                {sessionRecords.map((rec, qIdx) => {
+                  const q = rec.question;
+                  const picked = q.options.find((o) => o.id === rec.selectedOptionId) || null;
+                  const isRight = Boolean(picked?.isCorrect);
+                  const isIdk = rec.answeredAsIdk;
+
+                  return (
+                    <div
+                      key={q.id}
+                      className={`p-4 sm:p-5 rounded-2xl border space-y-3 ${
+                        isIdk
+                          ? "glass-panel border-amber-500/40"
+                          : isRight
+                            ? "glass-panel border-emerald-500/35"
+                            : "glass-panel border-rose-500/40"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-2.5 py-0.5 rounded-lg bg-surface-card border border-border-glass text-xs font-mono font-bold text-primary">
+                            #{qIdx + 1}
+                          </span>
+                          {isIdk ? (
+                            <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-bold">
+                              🤷 Honestly IDK
+                            </span>
+                          ) : isRight ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Correct
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-400 text-xs font-bold">
+                              <XCircle className="w-3.5 h-3.5" />
+                              Incorrect
+                            </span>
+                          )}
+                          {rec.isNotSureMarked && (
+                            <span className="px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 text-xs font-semibold">
+                              🤔 Marked Not Sure
+                            </span>
+                          )}
+                          <span className="font-jp text-lg font-bold text-primary">
+                            {q.targetVerb.kanji_form}（{q.targetVerb.furigana_reading}）
+                          </span>
+                          <span className="text-[11px] px-2 py-0.5 rounded bg-accent/15 text-accent font-bold">
+                            {q.targetVerb.jlpt_level} • {q.targetVerb.verb_group}
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            speakJapanese(
+                              q.targetVerb.furigana_reading || q.targetVerb.kanji_form
+                            )
+                          }
+                          className="p-1.5 rounded-lg glass-panel text-primary-muted hover:text-accent"
+                          title="Pronounce target verb"
+                        >
+                          <Volume2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <p className="text-xs text-primary-muted">
+                        Target Meaning:{" "}
+                        <strong className="text-primary">
+                          "{q.targetVerb.meanings.slice(0, 3).join(", ")}"
+                        </strong>{" "}
+                        • Mode:{" "}
+                        <span className="capitalize">{q.mode.replace(/_/g, " ")}</span>
+                      </p>
+
+                      {/* All 4 Options Explained */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        {q.options.map((opt, oIdx) => {
+                          const wasChosen = opt.id === rec.selectedOptionId;
+                          return (
+                            <div
+                              key={opt.id}
+                              className={`p-2.5 rounded-xl border text-xs space-y-0.5 ${
+                                opt.isCorrect
+                                  ? "bg-emerald-500/15 border-emerald-500/50 text-emerald-200"
+                                  : wasChosen
+                                    ? "bg-rose-500/15 border-rose-500/50 text-rose-200"
+                                    : "bg-surface-card/60 border-border-glass text-primary-muted"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-1 font-bold">
+                                <span>
+                                  {oIdx + 1}. {opt.label}
+                                </span>
+                                <span className="text-[10px] uppercase">
+                                  {opt.isCorrect
+                                    ? "✓ Right Answer"
+                                    : wasChosen
+                                      ? "✗ Your Pick"
+                                      : ""}
+                                </span>
+                              </div>
+                              <div className="text-[11px] opacity-90">
+                                <span className="font-jp font-semibold">
+                                  {opt.kanji}（{opt.furigana}）
+                                </span>{" "}
+                                ({opt.jlptLevel}) — "{opt.meaning}"
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : currentQuestion ? (
+            /* Active Question Card */
+            <div className="p-6 sm:p-8 rounded-3xl glass-card border border-border-glass space-y-6">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="px-2.5 py-1 rounded-lg bg-accent/15 text-accent text-xs font-bold">
@@ -1086,7 +1275,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 </div>
               </div>
 
-              {/* Active "Not Sure" Banner above options */}
               {!isCurrentAnswered && isNotSureMarked && (
                 <div className="px-3.5 py-2 rounded-xl bg-sky-500/15 border border-sky-400/40 text-xs text-sky-200 flex items-center justify-between gap-2">
                   <span>
@@ -1102,7 +1290,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 </div>
               )}
 
-              {/* Prompt Display */}
               <div className="text-center py-4 space-y-2">
                 <p className="text-xs font-semibold uppercase tracking-wider text-primary-muted">
                   {currentQuestion.mode === "kanji_to_meaning" &&
@@ -1136,7 +1323,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 )}
               </div>
 
-              {/* 4 Multiple Choice Options */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {currentQuestion.options.map((opt, idx) => {
                   const isPicked = selectedOptionId === opt.id;
@@ -1199,7 +1385,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 })}
               </div>
 
-              {/* 5th Anti-Gacha Option: "Honestly, I Don't Know" */}
               {!isCurrentAnswered && (
                 <button
                   type="button"
@@ -1211,7 +1396,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 </button>
               )}
 
-              {/* Instant Detailed Feedback Card — Stays visible until you click Next Question */}
               {isCurrentAnswered && correctOption && (
                 <div
                   className={`p-4 rounded-2xl border space-y-2.5 ${
@@ -1324,64 +1508,35 @@ export const QuizView: React.FC<QuizViewProps> = ({
                     </div>
                   ) : null}
 
-                  {/* Step-by-step Previous / Next Review Controls */}
-                  {isSessionComplete ? (
-                    <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-border-glass">
-                      <div className="flex items-center gap-2 text-sm font-bold text-primary">
-                        <Award className="w-5 h-5 text-amber-400" />
-                        <span>
-                          Session Complete! Score: {correctCount}/{questionsAnswered} ({accuracyPct}%)
-                          • 🤔 Not Sure: {notSureCount} • 🤷 IDK: {idkCount}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {activeIndex > 0 && (
-                          <button
-                            type="button"
-                            onClick={handlePreviousQuestion}
-                            className="min-h-[42px] px-4 py-2 rounded-xl glass-panel border border-border-glass text-primary font-semibold text-xs flex items-center gap-1 hover:border-accent/60"
-                          >
-                            <ChevronLeft className="w-4 h-4" />
-                            <span>Previous</span>
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => startNewSessionWith(selectedLevels, quizMode)}
-                          className="min-h-[42px] px-5 py-2 rounded-xl bg-accent text-white font-semibold text-xs hover:opacity-95 shadow-neon-glow"
-                        >
-                          Start New Session
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="pt-2 flex items-center justify-between gap-2 border-t border-border-glass">
-                      <button
-                        type="button"
-                        disabled={activeIndex === 0}
-                        onClick={handlePreviousQuestion}
-                        className="min-h-[42px] px-4 py-2 rounded-xl glass-panel border border-border-glass text-primary font-semibold text-xs flex items-center gap-1.5 hover:border-accent/60 disabled:opacity-40 disabled:pointer-events-none"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                        <span>Previous Question</span>
-                      </button>
+                  <div className="pt-2 flex items-center justify-between gap-2 border-t border-border-glass">
+                    <button
+                      type="button"
+                      disabled={activeIndex === 0}
+                      onClick={handlePreviousQuestion}
+                      className="min-h-[42px] px-4 py-2 rounded-xl glass-panel border border-border-glass text-primary font-semibold text-xs flex items-center gap-1.5 hover:border-accent/60 disabled:opacity-40 disabled:pointer-events-none"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      <span>Previous Question</span>
+                    </button>
 
-                      <button
-                        type="button"
-                        onClick={handleNextQuestion}
-                        className="min-h-[42px] px-5 py-2 rounded-xl bg-accent text-white font-semibold text-xs flex items-center gap-1.5 hover:opacity-95 shadow-neon-glow"
-                      >
-                        <span>
-                          {isReviewingPrevious ? "Next Reviewed" : "Next Question"}
-                        </span>
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
+                    <button
+                      type="button"
+                      onClick={handleNextQuestion}
+                      className="min-h-[42px] px-5 py-2 rounded-xl bg-accent text-white font-semibold text-xs flex items-center gap-1.5 hover:opacity-95 shadow-neon-glow"
+                    >
+                      <span>
+                        {isFinalQuestionReached
+                          ? "Finish & View Full Scorecard"
+                          : isReviewingPrevious
+                            ? "Next Reviewed"
+                            : "Next Question"}
+                      </span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               )}
 
-              {/* Allow stepping back to review answered questions even while viewing an unanswered one */}
               {!isCurrentAnswered && activeIndex > 0 && (
                 <div className="pt-1 flex justify-start">
                   <button
