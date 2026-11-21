@@ -138,13 +138,16 @@ export function App() {
 
   if (isLoading || !profile) {
     return (
-      <div className="min-h-screen bg-canvas flex flex-col items-center justify-center text-center p-6">
+      <div
+        style={{ minHeight: "100dvh" }}
+        className="bg-canvas flex flex-col items-center justify-center text-center p-6"
+      >
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ repeat: Infinity, duration: 1.2, ease: "linear" }}
           className="w-12 h-12 rounded-full border-2 border-accent border-t-transparent mb-4"
         />
-        <h2 className="text-lg font-bold text-primary">JLPT Verb & Grammar Studio</h2>
+        <h2 className="text-lg font-bold text-primary">CrispyJLPT Companion</h2>
         <p className="text-xs text-primary-muted mt-1">Initializing SQLite engine & corpus...</p>
       </div>
     );
@@ -156,9 +159,18 @@ export function App() {
       : "Core JLPT";
 
   return (
-    <div className="min-h-screen bg-canvas text-primary flex flex-col font-sans pb-24 md:pb-8">
-      {/* Top Header Navigation (Desktop & Mobile Unified Header) */}
-      <header className="sticky top-0 z-40 w-full glass-panel border-b border-border-glass px-4 py-3">
+    <div
+      style={{
+        minHeight: "100dvh",
+        paddingBottom: "calc(6rem + env(safe-area-inset-bottom))",
+      }}
+      className="bg-canvas text-primary flex flex-col font-sans md:pb-8"
+    >
+      {/* Top Header Navigation with Android Safe-Area Inset */}
+      <header
+        style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
+        className="sticky top-0 z-40 w-full glass-panel border-b border-border-glass px-4 pb-3"
+      >
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           {/* Brand Logo & Name */}
           <div className="flex items-center gap-2.5">
@@ -167,7 +179,7 @@ export function App() {
             </div>
             <div>
               <h1 className="text-sm font-bold text-primary flex items-center gap-1.5 leading-tight">
-                <span>JLPT Studio</span>
+                <span>CrispyJLPT Companion</span>
                 <span className="hidden sm:inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-accent/20 text-accent">
                   v2.1
                 </span>
@@ -228,7 +240,7 @@ export function App() {
       </header>
 
       {/* Main Content Area wrapped in Resilient Error Boundary */}
-      <main className="flex-1 w-full max-w-6xl mx-auto py-2">
+      <main className="flex-1 w-full max-w-6xl mx-auto px-3 sm:px-4 py-2">
         <ErrorBoundary onReset={() => setActiveTab("present")}>
           <AnimatePresence mode="wait">
             {activeTab === "present" && (
@@ -325,8 +337,11 @@ export function App() {
         </ErrorBoundary>
       </main>
 
-      {/* Mobile Floating Bottom Glass Bar (6 Tabs) */}
-      <nav className="md:hidden fixed bottom-4 left-3 right-3 z-40 p-2 rounded-2xl glass-card border border-border-glass shadow-glass flex items-center justify-around">
+      {/* Mobile Floating Bottom Glass Bar (6 Tabs) with Safe-Area Inset */}
+      <nav
+        style={{ bottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+        className="md:hidden fixed left-3 right-3 z-40 p-2 rounded-2xl glass-card border border-border-glass shadow-glass flex items-center justify-around"
+      >
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;

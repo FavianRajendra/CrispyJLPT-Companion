@@ -16,6 +16,10 @@ jobs:
   build-android:
     name: Build Android APK (CrispyJLPT-Companion)
     runs-on: ubuntu-latest
+    env:
+      VITE_TURSO_DATABASE_URL: ${{ secrets.VITE_TURSO_DATABASE_URL }}
+      VITE_TURSO_AUTH_TOKEN: ${{ secrets.VITE_TURSO_AUTH_TOKEN }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,6 +35,9 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '17'
+
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -57,49 +64,39 @@ jobs:
           echo "CC_aarch64_linux_android=$TOOLCHAIN/aarch64-linux-android24-clang" >> $GITHUB_ENV
           echo "AR_aarch64_linux_android=$TOOLCHAIN/llvm-ar" >> $GITHUB_ENV
           echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$TOOLCHAIN/aarch64-linux-android24-clang" >> $GITHUB_ENV
-          echo "CC_armv7_linux_androideabi=$TOOLCHAIN/armv7a-linux-androideabi24-clang" >> $GITHUB_ENV
-          echo "AR_armv7_linux_androideabi=$TOOLCHAIN/llvm-ar" >> $GITHUB_ENV
-          echo "CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=$TOOLCHAIN/armv7a-linux-androideabi24-clang" >> $GITHUB_ENV
-          echo "CC_x86_64_linux_android=$TOOLCHAIN/x86_64-linux-android24-clang" >> $GITHUB_ENV
-          echo "AR_x86_64_linux_android=$TOOLCHAIN/llvm-ar" >> $GITHUB_ENV
-          echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$TOOLCHAIN/x86_64-linux-android24-clang" >> $GITHUB_ENV
-          echo "CC_i686_linux_android=$TOOLCHAIN/i686-linux-android24-clang" >> $GITHUB_ENV
-          echo "AR_i686_linux_android=$TOOLCHAIN/llvm-ar" >> $GITHUB_ENV
-          echo "CARGO_TARGET_I686_LINUX_ANDROID_LINKER=$TOOLCHAIN/i686-linux-android24-clang" >> $GITHUB_ENV
 
-      - name: Install Rust Toolchain & Android Targets
+      - name: Install Rust Toolchain & Android ARM64 Target
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+          targets: aarch64-linux-android
 
       - name: Rust Cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
-      - name: Install Dependencies & Build Web Bundle
-        env:
-          VITE_TURSO_DATABASE_URL: ${{ secrets.VITE_TURSO_DATABASE_URL }}
-          VITE_TURSO_AUTH_TOKEN: ${{ secrets.VITE_TURSO_AUTH_TOKEN }}
+      - name: Verify Turso Secrets & Build Web Bundle
         run: |
+          if [ -z "$VITE_TURSO_DATABASE_URL" ] || [ -z "$VITE_TURSO_AUTH_TOKEN" ]; then
+            echo "WARNING: Turso secrets are empty in this workflow run!"
+          else
+            echo "Turso URL configured: ${VITE_TURSO_DATABASE_URL:0:28}..."
+          fi
           npm ci
           npm run build
 
-      - name: Initialize & Build Android APK
-        env:
-          VITE_TURSO_DATABASE_URL: ${{ secrets.VITE_TURSO_DATABASE_URL }}
-          VITE_TURSO_AUTH_TOKEN: ${{ secrets.VITE_TURSO_AUTH_TOKEN }}
+      - name: Initialize & Build Signed Android APK (ARM64)
         run: |
           if [ ! -d "src-tauri/gen/android" ]; then
             npx tauri android init --ci
           fi
-          npx tauri android build --apk
+          npx tauri android build --debug --apk --target aarch64
 
       - name: Upload APK Workflow Artifact
         uses: actions/upload-artifact@v4
         with:
           name: CrispyJLPT-Companion-Android-APK
-          path: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/debug/*.apk
           if-no-files-found: error
 
       - name: Attach APK to GitHub Release (On Version Tags v*)
@@ -108,11 +105,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          files: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+          files: src-tauri/gen/android/app/build/outputs/apk/universal/debug/*.apk
 
   build-desktop:
     name: Build Desktop (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
+    env:
+      VITE_TURSO_DATABASE_URL: ${{ secrets.VITE_TURSO_DATABASE_URL }}
+      VITE_TURSO_AUTH_TOKEN: ${{ secrets.VITE_TURSO_AUTH_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -150,8 +150,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VITE_TURSO_DATABASE_URL: ${{ secrets.VITE_TURSO_DATABASE_URL }}
-          VITE_TURSO_AUTH_TOKEN: ${{ secrets.VITE_TURSO_AUTH_TOKEN }}
         with:
           args: ${{ matrix.platform == 'macos' && '--target universal-apple-darwin' || '' }}
 
@@ -170,8 +168,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VITE_TURSO_DATABASE_URL: ${{ secrets.VITE_TURSO_DATABASE_URL }}
-          VITE_TURSO_AUTH_TOKEN: ${{ secrets.VITE_TURSO_AUTH_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'CrispyJLPT-Companion ${{ github.ref_name }}'
