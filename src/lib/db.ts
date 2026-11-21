@@ -174,7 +174,7 @@ function scheduleBackgroundSync(delayMs = 2000) {
 
 /**
  * Bidirectional sync between local SQLite and Turso Cloud:
- * 1. Pushes local user_profiles, dirty user_verb_progress (sync_dirty = 1), and quiz_history.
+ * 1. Pushes local user_profiles, dirty user_verb_progress, quiz_history, and user_study_logs.
  * 2. Pulls remote updates from other devices and merges newer timestamps into local SQLite.
  */
 export async function syncWithTurso(): Promise<boolean> {
@@ -209,6 +209,24 @@ export async function syncWithTurso(): Promise<boolean> {
           selected_meaning TEXT NOT NULL,
           correct_label TEXT NOT NULL,
           answered_at TEXT NOT NULL
+        );
+      `);
+
+      // Ensure local user_study_logs exists before syncing it
+      await local.execute(`
+        CREATE TABLE IF NOT EXISTS user_study_logs (
+          id TEXT PRIMARY KEY,
+          item_type TEXT NOT NULL,
+          item_key TEXT NOT NULL,
+          title TEXT NOT NULL,
+          reading TEXT NOT NULL,
+          meaning TEXT NOT NULL,
+          jlpt_level TEXT NOT NULL,
+          source TEXT NOT NULL DEFAULT 'manual',
+          is_deleted INTEGER NOT NULL DEFAULT 0,
+          sync_dirty INTEGER NOT NULL DEFAULT 1,
+          logged_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
         );
       `);
 
@@ -433,6 +451,106 @@ export async function syncWithTurso(): Promise<boolean> {
         );
       }
 
+      // 5. Bidirectional Sync for user_study_logs (Logged Kanji, Vocab, Grammar, & Auto-Mastered)
+      const dirtyLogs = await local.select<any[]>(
+        "SELECT * FROM user_study_logs WHERE sync_dirty = 1;"
+      );
+
+      if (dirtyLogs.length > 0) {
+        const logStmts = dirtyLogs.map((log) => ({
+          sql: `INSERT INTO user_study_logs (
+                  user_id, id, item_type, item_key, title, reading, meaning,
+                  jlpt_level, source, is_deleted, logged_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, id) DO UPDATE SET
+                  title = excluded.title,
+                  reading = excluded.reading,
+                  meaning = excluded.meaning,
+                  jlpt_level = excluded.jlpt_level,
+                  source = excluded.source,
+                  is_deleted = excluded.is_deleted,
+                  updated_at = excluded.updated_at
+                WHERE excluded.updated_at >= user_study_logs.updated_at;`,
+          args: [
+            userId,
+            String(log.id),
+            String(log.item_type),
+            String(log.item_key),
+            String(log.title),
+            String(log.reading),
+            String(log.meaning),
+            String(log.jlpt_level),
+            String(log.source || "manual"),
+            Number(log.is_deleted ?? 0),
+            String(log.logged_at),
+            String(log.updated_at || log.logged_at),
+          ],
+        }));
+
+        await remote.batch(logStmts, "write");
+
+        const syncedLogIds = dirtyLogs.map((l) => l.id);
+        const logPlaceholders = syncedLogIds.map(() => "?").join(", ");
+        await local.execute(
+          `UPDATE user_study_logs SET sync_dirty = 0 WHERE id IN (${logPlaceholders});`,
+          syncedLogIds
+        );
+      }
+
+      const remoteLogsRes = await remote.execute({
+        sql: `SELECT * FROM user_study_logs
+              WHERE user_id = ? AND updated_at > ?
+              ORDER BY updated_at ASC;`,
+        args: [userId, lastSynced],
+      });
+
+      let pulledAnyLogs = false;
+      for (const rl of (remoteLogsRes.rows || []) as any[]) {
+        const logId = String(rl.id);
+        const localLogMatch = await local.select<any[]>(
+          "SELECT updated_at FROM user_study_logs WHERE id = ? LIMIT 1;",
+          [logId]
+        );
+        const localLogUpdated = localLogMatch[0]?.updated_at || "";
+        const remoteLogUpdated = String(rl.updated_at || "");
+
+        if (remoteLogUpdated > localLogUpdated) {
+          await local.execute(
+            `INSERT INTO user_study_logs (
+              id, item_type, item_key, title, reading, meaning, jlpt_level,
+              source, is_deleted, sync_dirty, logged_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              title = excluded.title,
+              reading = excluded.reading,
+              meaning = excluded.meaning,
+              jlpt_level = excluded.jlpt_level,
+              source = excluded.source,
+              is_deleted = excluded.is_deleted,
+              sync_dirty = 0,
+              updated_at = excluded.updated_at;`,
+            [
+              logId,
+              String(rl.item_type),
+              String(rl.item_key),
+              String(rl.title),
+              String(rl.reading),
+              String(rl.meaning),
+              String(rl.jlpt_level),
+              String(rl.source || "manual"),
+              Number(rl.is_deleted ?? 0),
+              String(rl.logged_at),
+              remoteLogUpdated,
+            ]
+          );
+          pulledAnyLogs = true;
+        }
+      }
+
+      if (pulledAnyLogs && typeof window !== "undefined") {
+        window.dispatchEvent(new Event("study-logs-updated"));
+      }
+
       const nowIso = new Date().toISOString();
       syncStatus.lastSyncedAt = nowIso;
       if (typeof localStorage !== "undefined") {
@@ -513,7 +631,7 @@ function isTauriEnvironment(): boolean {
 
 function isUserMutationQuery(query: string): boolean {
   return (
-    /\b(user_verb_progress|user_profiles|quiz_history)\b/i.test(query) &&
+    /\b(user_verb_progress|user_profiles|quiz_history|user_study_logs)\b/i.test(query) &&
     /^\s*(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(query)
   );
 }
@@ -720,6 +838,24 @@ async function initializeSchema(db: AppDatabase): Promise<void> {
       last_reviewed_at TEXT,
       next_review_at TEXT,
       sync_dirty INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  // 4. User Study Logs Table (Manual + Auto-Mastered Kanji, Vocab, Verbs, Grammar)
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS user_study_logs (
+      id TEXT PRIMARY KEY,
+      item_type TEXT NOT NULL,
+      item_key TEXT NOT NULL,
+      title TEXT NOT NULL,
+      reading TEXT NOT NULL,
+      meaning TEXT NOT NULL,
+      jlpt_level TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'manual',
+      is_deleted INTEGER NOT NULL DEFAULT 0,
+      sync_dirty INTEGER NOT NULL DEFAULT 1,
+      logged_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
   `);

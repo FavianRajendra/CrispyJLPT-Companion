@@ -16,6 +16,7 @@ import {
   HelpCircle,
   ChevronLeft,
   ChevronRight,
+  Layers,
 } from "lucide-react";
 import {
   Verb,
@@ -25,6 +26,9 @@ import {
   getDatabase,
 } from "../lib/db";
 import { speakJapanese } from "../lib/audio";
+import { getAllStudyLogs, StudyLogEntry } from "../lib/studyLogs";
+import seedKanji from "../data/seed_kanji.json";
+import seedVerbs from "../data/seed_verbs.json";
 
 export interface QuizViewProps {
   verbs: Verb[];
@@ -36,6 +40,14 @@ export interface QuizViewProps {
 }
 
 type QuizMode = "kanji_to_meaning" | "kanji_to_reading" | "meaning_to_kanji" | "mixed";
+type QuizDeckScope =
+  | "all"
+  | "jlpt_kanji"
+  | "jlpt_vocab"
+  | "jlpt_verbs"
+  | "logged_kanji"
+  | "logged_vocab"
+  | "mastered_verbs";
 type SessionLength = 10 | 20 | 30 | 40 | 0; // 0 = Infinite
 
 interface QuizOption {
@@ -53,6 +65,7 @@ interface QuizQuestion {
   id: string;
   mode: Exclude<QuizMode, "mixed">;
   targetVerb: Verb;
+  isKanjiItem?: boolean;
   options: QuizOption[];
 }
 
@@ -83,12 +96,44 @@ export interface QuizHistoryEntry {
 }
 
 const JLPT_LEVELS: JlptLevel[] = ["N5", "N4", "N3", "N2", "N1"];
+const MASTERY_THRESHOLD = 0.8;
+
+const SEED_CATEGORY_BY_ID = new Map<number, string>(
+  (seedVerbs as any[]).map((v) => [Number(v.id), v.category || "verb"])
+);
+
+// Adapt seed_kanji.json entries into Verb-compatible quiz items with negative synthetic IDs
+// so they work seamlessly with all 4 quiz modes, ruby furigana, audio, and choice history
+const KANJI_QUIZ_ITEMS: Verb[] = (seedKanji as any[]).map((k, idx) => {
+  const readings = [...(k.kunyomi || []), ...(k.onyomi || [])];
+  const readingStr = readings.slice(0, 3).join("・") || k.character;
+  return {
+    id: -(idx + 1),
+    kanji_form: k.character,
+    furigana_reading: readingStr,
+    ruby_segments: [{ base: k.character, ruby: readingStr }],
+    meanings: Array.isArray(k.meanings) && k.meanings.length > 0 ? k.meanings : ["Kanji"],
+    jlpt_level: (k.jlpt_level || "N5") as JlptLevel,
+    verb_group: `${k.strokes || "?"} Strokes` as any,
+    category: "noun",
+    constituent_kanji: [k.character],
+    industry_tags: ["general"],
+    is_core_jlpt: 1,
+  };
+});
 
 const IDK_BUTTON_VARIANTS = [
   "🤷 Honestly, I don't know (No Gacha)",
   "🫠 Brain empty — show me the answer",
   "🎲 Skip guessing — flag for review",
 ];
+
+function resolveItemCategory(item: Verb): string {
+  if (item.id < 0) return "kanji";
+  const rawCat = (item as Verb & { category?: string }).category;
+  if (rawCat && rawCat !== "verb") return rawCat;
+  return SEED_CATEGORY_BY_ID.get(Number(item.id)) || rawCat || "verb";
+}
 
 function getProgressEntry(
   progressMap: Map<number, VerbProgress> | Record<number, VerbProgress> | undefined,
@@ -146,11 +191,14 @@ function renderRubyText(verb: Verb, showFurigana: boolean) {
 
 function createQuestionFromPool(
   pool: Verb[],
+  distractorPool: Verb[],
   excludeIds: Set<number>,
   modeSetting: QuizMode,
   currentProgressMap: Map<number, VerbProgress> | Record<number, VerbProgress> | undefined
 ): QuizQuestion | null {
-  if (pool.length < 4) return null;
+  if (pool.length === 0) return null;
+  const fullDistractorSource = distractorPool.length >= 4 ? distractorPool : pool;
+  if (fullDistractorSource.length < 4) return null;
 
   const remaining = pool.filter((v) => !excludeIds.has(v.id));
   const sourcePool = remaining.length > 0 ? remaining : pool;
@@ -174,9 +222,12 @@ function createQuestionFromPool(
   const targetMeaning = targetVerb.meanings.slice(0, 3).join(", ");
 
   const distractors: Verb[] = [];
-  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  const shuffled = [...fullDistractorSource].sort(() => Math.random() - 0.5);
   for (const candidate of shuffled) {
     if (candidate.id === targetVerb.id) continue;
+    // Keep kanji distractors matched with kanji targets, and word distractors with word targets
+    if ((candidate.id < 0) !== (targetVerb.id < 0)) continue;
+
     const candMeaning = candidate.meanings.slice(0, 3).join(", ");
     if (
       effectiveMode === "kanji_to_meaning" &&
@@ -232,6 +283,7 @@ function createQuestionFromPool(
     id: `q_${Date.now()}_${targetVerb.id}_${Math.random().toString(36).slice(2, 5)}`,
     mode: effectiveMode,
     targetVerb,
+    isKanjiItem: targetVerb.id < 0,
     options,
   };
 }
@@ -245,11 +297,13 @@ export const QuizView: React.FC<QuizViewProps> = ({
   onProgressUpdate,
 }) => {
   const [subView, setSubView] = useState<"quiz" | "history">("quiz");
+  const [selectedDecks, setSelectedDecks] = useState<QuizDeckScope[]>([]);
   const [quizMode, setQuizMode] = useState<QuizMode>("kanji_to_meaning");
   const [sessionLength, setSessionLength] = useState<SessionLength>(20);
   const [selectedLevels, setSelectedLevels] = useState<JlptLevel[]>([]);
   const [showFurigana, setShowFurigana] = useState<boolean>(true);
   const [showSessionSummary, setShowSessionSummary] = useState<boolean>(false);
+  const [studyLogs, setStudyLogs] = useState<StudyLogEntry[]>([]);
 
   const progressMapRef = useRef(progressMap);
   progressMapRef.current = progressMap;
@@ -268,19 +322,178 @@ export const QuizView: React.FC<QuizViewProps> = ({
     onProgressUpdate,
   };
 
-  const getFilteredPool = useCallback((levels: JlptLevel[]) => {
-    const currentVerbs = verbsRef.current || [];
-    if (currentVerbs.length === 0) return [];
-    if (levels.length > 0) {
-      const filtered = currentVerbs.filter((v) => levels.includes(v.jlpt_level));
-      if (filtered.length >= 4) return filtered;
-    }
-    return currentVerbs;
+  // Load manually logged & auto-mastered Kanji / Vocab from SQLite & Turso sync
+  useEffect(() => {
+    const refreshLogs = () => {
+      getAllStudyLogs()
+        .then((rows) => {
+          setStudyLogs(rows);
+        })
+        .catch(() => {});
+    };
+    refreshLogs();
+    window.addEventListener("study-logs-updated", refreshLogs);
+    return () => window.removeEventListener("study-logs-updated", refreshLogs);
   }, []);
 
+  const loggedKanjiChars = useMemo(() => {
+    const chars = new Set<string>(
+      studyLogs.filter((l) => l.item_type === "kanji").map((l) => l.item_key)
+    );
+    for (const v of verbs || []) {
+      const prog = getProgressEntry(progressMap, v.id);
+      if (prog && (prog.repetitions > 0 || prog.reading_score > 0 || prog.meaning_score > 0)) {
+        for (const ch of v.constituent_kanji || []) {
+          chars.add(ch);
+        }
+      }
+    }
+    return chars;
+  }, [studyLogs, verbs, progressMap]);
+
+  const loggedVocabIds = useMemo(() => {
+    const ids = new Set<number>(
+      studyLogs
+        .filter((l) => l.item_type === "vocab" || l.item_type === "verb")
+        .map((l) => Number(l.item_key))
+    );
+    for (const v of verbs || []) {
+      const prog = getProgressEntry(progressMap, v.id);
+      if (prog && (prog.repetitions > 0 || prog.reading_score > 0 || prog.meaning_score > 0)) {
+        ids.add(v.id);
+      }
+    }
+    return ids;
+  }, [studyLogs, verbs, progressMap]);
+
+  const masteredVerbIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const v of verbs || []) {
+      if (resolveItemCategory(v) !== "verb") continue;
+      const prog = getProgressEntry(progressMap, v.id);
+      if (prog && (prog.reading_score + prog.meaning_score) / 2 >= MASTERY_THRESHOLD) {
+        ids.add(v.id);
+      }
+    }
+    return ids;
+  }, [verbs, progressMap]);
+
+  const loggedKanjiRef = useRef(loggedKanjiChars);
+  loggedKanjiRef.current = loggedKanjiChars;
+
+  const loggedVocabRef = useRef(loggedVocabIds);
+  loggedVocabRef.current = loggedVocabIds;
+
+  const masteredVerbsRef = useRef(masteredVerbIds);
+  masteredVerbsRef.current = masteredVerbIds;
+
+  const getFilteredPools = useCallback(
+    (
+      levels: JlptLevel[],
+      decks: QuizDeckScope[]
+    ): { targetPool: Verb[]; distractorPool: Verb[] } => {
+      const currentVerbs = verbsRef.current || [];
+
+      const byLevel = <T extends { jlpt_level: JlptLevel }>(items: T[]) =>
+        levels.length > 0 ? items.filter((item) => levels.includes(item.jlpt_level)) : items;
+
+      const activeScopes = decks.filter((d) => d !== "all");
+
+      // Default ("All Vocab & Kanji") when no specific deck pills are selected
+      if (activeScopes.length === 0) {
+        const levelWords = byLevel(currentVerbs);
+        const levelKanji = byLevel(KANJI_QUIZ_ITEMS);
+        const combinedTarget = [...levelWords, ...levelKanji];
+        const combinedDistractor =
+          combinedTarget.length >= 4
+            ? combinedTarget
+            : [...currentVerbs, ...KANJI_QUIZ_ITEMS];
+        return {
+          targetPool: combinedTarget.length > 0 ? combinedTarget : combinedDistractor,
+          distractorPool: combinedDistractor,
+        };
+      }
+
+      const targetMap = new Map<number, Verb>();
+      const distractorMap = new Map<number, Verb>();
+      const addTargets = (items: Verb[]) => {
+        for (const item of items) targetMap.set(item.id, item);
+      };
+      const addDistractors = (items: Verb[]) => {
+        for (const item of items) distractorMap.set(item.id, item);
+      };
+
+      for (const scope of activeScopes) {
+        if (scope === "jlpt_kanji") {
+          const levelKanji = byLevel(KANJI_QUIZ_ITEMS);
+          addTargets(levelKanji.length > 0 ? levelKanji : KANJI_QUIZ_ITEMS);
+          addDistractors(KANJI_QUIZ_ITEMS);
+        } else if (scope === "logged_kanji") {
+          const charSet = loggedKanjiRef.current;
+          const matched = KANJI_QUIZ_ITEMS.filter((k) => charSet.has(k.kanji_form));
+          const levelFiltered = byLevel(matched);
+          const finalTarget =
+            levelFiltered.length > 0
+              ? levelFiltered
+              : matched.length > 0
+                ? matched
+                : byLevel(KANJI_QUIZ_ITEMS);
+          addTargets(finalTarget);
+          addDistractors(KANJI_QUIZ_ITEMS);
+        } else if (scope === "logged_vocab") {
+          const idSet = loggedVocabRef.current;
+          const matched = currentVerbs.filter((v) => idSet.has(v.id));
+          const levelFiltered = byLevel(matched);
+          const finalTarget =
+            levelFiltered.length > 0
+              ? levelFiltered
+              : matched.length > 0
+                ? matched
+                : byLevel(currentVerbs);
+          addTargets(finalTarget);
+          addDistractors(currentVerbs);
+        } else if (scope === "mastered_verbs") {
+          const idSet = masteredVerbsRef.current;
+          const matched = currentVerbs.filter((v) => idSet.has(v.id));
+          const levelFiltered = byLevel(matched);
+          const onlyVerbs = currentVerbs.filter((v) => resolveItemCategory(v) === "verb");
+          const finalTarget =
+            levelFiltered.length > 0
+              ? levelFiltered
+              : matched.length > 0
+                ? matched
+                : byLevel(onlyVerbs);
+          addTargets(finalTarget);
+          addDistractors(onlyVerbs.length >= 4 ? onlyVerbs : currentVerbs);
+        } else if (scope === "jlpt_vocab") {
+          const nonVerbs = currentVerbs.filter((v) => resolveItemCategory(v) !== "verb");
+          const levelNonVerbs = byLevel(nonVerbs);
+          addTargets(levelNonVerbs.length > 0 ? levelNonVerbs : nonVerbs);
+          addDistractors(levelNonVerbs.length >= 4 ? levelNonVerbs : currentVerbs);
+        } else if (scope === "jlpt_verbs") {
+          const onlyVerbs = currentVerbs.filter((v) => resolveItemCategory(v) === "verb");
+          const levelVerbs = byLevel(onlyVerbs);
+          addTargets(levelVerbs.length > 0 ? levelVerbs : onlyVerbs);
+          addDistractors(levelVerbs.length >= 4 ? levelVerbs : currentVerbs);
+        }
+      }
+
+      const targetPool = Array.from(targetMap.values());
+      const distractorPool = Array.from(distractorMap.values());
+
+      return {
+        targetPool,
+        distractorPool: distractorPool.length >= 4 ? distractorPool : [...currentVerbs, ...KANJI_QUIZ_ITEMS],
+      };
+    },
+    []
+  );
+
   const [sessionRecords, setSessionRecords] = useState<SessionQuestionRecord[]>(() => {
-    const initialPool = verbs && verbs.length >= 4 ? verbs : [];
+    const initialPool =
+      verbs && verbs.length >= 4 ? [...verbs, ...KANJI_QUIZ_ITEMS] : KANJI_QUIZ_ITEMS;
     const first = createQuestionFromPool(
+      initialPool,
       initialPool,
       new Set<number>(),
       "kanji_to_meaning",
@@ -314,10 +527,11 @@ export const QuizView: React.FC<QuizViewProps> = ({
   });
 
   useEffect(() => {
-    if (sessionRecords.length === 0 && verbs && verbs.length >= 4) {
-      const pool = getFilteredPool(selectedLevels);
+    if (sessionRecords.length === 0 && (verbs?.length > 0 || KANJI_QUIZ_ITEMS.length > 0)) {
+      const { targetPool, distractorPool } = getFilteredPools(selectedLevels, selectedDecks);
       const first = createQuestionFromPool(
-        pool,
+        targetPool,
+        distractorPool,
         new Set<number>(),
         quizMode,
         progressMapRef.current
@@ -335,7 +549,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
         setActiveIndex(0);
       }
     }
-  }, [verbs, sessionRecords.length, getFilteredPool, selectedLevels, quizMode]);
+  }, [verbs, sessionRecords.length, getFilteredPools, selectedLevels, selectedDecks, quizMode]);
 
   const [history, setHistory] = useState<QuizHistoryEntry[]>([]);
   const [historyFilter, setHistoryFilter] = useState<
@@ -396,7 +610,11 @@ export const QuizView: React.FC<QuizViewProps> = ({
   }, [loadQuizHistory]);
 
   const startNewSessionWith = useCallback(
-    (nextLevels: JlptLevel[], nextMode: QuizMode) => {
+    (
+      nextLevels: JlptLevel[],
+      nextMode: QuizMode,
+      nextDecks: QuizDeckScope[] = selectedDecks
+    ) => {
       const emptySet = new Set<number>();
       setQuestionsAnswered(0);
       setCorrectCount(0);
@@ -406,9 +624,10 @@ export const QuizView: React.FC<QuizViewProps> = ({
       setBestStreak(0);
       setShowSessionSummary(false);
 
-      const pool = getFilteredPool(nextLevels);
+      const { targetPool, distractorPool } = getFilteredPools(nextLevels, nextDecks);
       const first = createQuestionFromPool(
-        pool,
+        targetPool,
+        distractorPool,
         emptySet,
         nextMode,
         progressMapRef.current
@@ -429,30 +648,58 @@ export const QuizView: React.FC<QuizViewProps> = ({
       setActiveIndex(0);
       setUsedVerbIds(emptySet);
     },
-    [getFilteredPool]
+    [selectedDecks, getFilteredPools]
   );
+
+  useEffect(() => {
+    const usesAsyncLogs =
+      selectedDecks.includes("logged_kanji") ||
+      selectedDecks.includes("logged_vocab") ||
+      selectedDecks.includes("mastered_verbs");
+    if (usesAsyncLogs && questionsAnswered === 0) {
+      startNewSessionWith(selectedLevels, quizMode, selectedDecks);
+    }
+  }, [loggedKanjiChars, loggedVocabIds, masteredVerbIds]);
+
+  const handleToggleDeckScope = (scope: QuizDeckScope) => {
+    if (scope === "all") {
+      setSelectedDecks([]);
+      startNewSessionWith(selectedLevels, quizMode, []);
+      return;
+    }
+    const nextDecks = selectedDecks.includes(scope)
+      ? selectedDecks.filter((d) => d !== scope)
+      : [...selectedDecks, scope];
+    setSelectedDecks(nextDecks);
+    startNewSessionWith(selectedLevels, quizMode, nextDecks);
+  };
+
+  const handleClearDecks = () => {
+    setSelectedDecks([]);
+    startNewSessionWith(selectedLevels, quizMode, []);
+  };
 
   const handleToggleLevel = (lvl: JlptLevel) => {
     const nextLevels = selectedLevels.includes(lvl)
       ? selectedLevels.filter((x) => x !== lvl)
       : [...selectedLevels, lvl];
     setSelectedLevels(nextLevels);
-    startNewSessionWith(nextLevels, quizMode);
+    startNewSessionWith(nextLevels, quizMode, selectedDecks);
   };
 
   const handleClearLevels = () => {
     setSelectedLevels([]);
-    startNewSessionWith([], quizMode);
+    startNewSessionWith([], quizMode, selectedDecks);
   };
 
   const handleChangeQuizMode = (nextMode: QuizMode) => {
     setQuizMode(nextMode);
-    startNewSessionWith(selectedLevels, nextMode);
+    startNewSessionWith(selectedLevels, nextMode, selectedDecks);
   };
 
   const handleChangeSessionLength = (nextLen: SessionLength) => {
     setSessionLength(nextLen);
-    startNewSessionWith(selectedLevels, quizMode);
+    startNewSessionWith(selectedLevels, quizMode, selectedDecks);
   };
 
   const setCurrentNotSure = (updater: boolean | ((prev: boolean) => boolean)) => {
@@ -532,84 +779,87 @@ export const QuizView: React.FC<QuizViewProps> = ({
         ]
       );
 
-      const existing = getProgressEntry(progressMapRef.current, target.id);
-      const prevReading = existing?.reading_score ?? 0;
-      const prevMeaning = existing?.meaning_score ?? 0;
-      const prevStability = existing?.stability_days ?? 1.0;
-      const prevReps = existing?.repetitions ?? 0;
-      const prevLapses = existing?.lapses ?? 0;
+      // Only write FSRS rows to user_verb_progress for real dictionary word/verb IDs (> 0)
+      if (target.id > 0) {
+        const existing = getProgressEntry(progressMapRef.current, target.id);
+        const prevReading = existing?.reading_score ?? 0;
+        const prevMeaning = existing?.meaning_score ?? 0;
+        const prevStability = existing?.stability_days ?? 1.0;
+        const prevReps = existing?.repetitions ?? 0;
+        const prevLapses = existing?.lapses ?? 0;
 
-      const rightGain = isNotSure ? 0.1 : 0.22;
-      const isReadingTest = mode === "kanji_to_reading";
-      const nextReading = isReadingTest
-        ? isRight
-          ? Math.min(1, prevReading + rightGain)
-          : Math.max(0, prevReading - 0.15)
-        : isRight
-          ? Math.min(1, prevReading + 0.06)
-          : prevReading;
+        const rightGain = isNotSure ? 0.1 : 0.22;
+        const isReadingTest = mode === "kanji_to_reading";
+        const nextReading = isReadingTest
+          ? isRight
+            ? Math.min(1, prevReading + rightGain)
+            : Math.max(0, prevReading - 0.15)
+          : isRight
+            ? Math.min(1, prevReading + 0.06)
+            : prevReading;
 
-      const nextMeaning = !isReadingTest
-        ? isRight
-          ? Math.min(1, prevMeaning + rightGain)
-          : Math.max(0, prevMeaning - 0.15)
-        : isRight
-          ? Math.min(1, prevMeaning + 0.06)
-          : prevMeaning;
+        const nextMeaning = !isReadingTest
+          ? isRight
+            ? Math.min(1, prevMeaning + rightGain)
+            : Math.max(0, prevMeaning - 0.15)
+          : isRight
+            ? Math.min(1, prevMeaning + 0.06)
+            : prevMeaning;
 
-      const nextStability = isRight
-        ? isNotSure
-          ? Math.min(180, prevStability * 1.15 + 0.2)
-          : Math.min(180, prevStability * 1.65 + 0.5)
-        : Math.max(0.5, prevStability * 0.5);
-      const nextReviewDate = new Date(
-        Date.now() + nextStability * 24 * 60 * 60 * 1000
-      ).toISOString();
+        const nextStability = isRight
+          ? isNotSure
+            ? Math.min(180, prevStability * 1.15 + 0.2)
+            : Math.min(180, prevStability * 1.65 + 0.5)
+          : Math.max(0.5, prevStability * 0.5);
+        const nextReviewDate = new Date(
+          Date.now() + nextStability * 24 * 60 * 60 * 1000
+        ).toISOString();
 
-      const updatedProgress: VerbProgress = {
-        verb_id: target.id,
-        reading_score: Number(nextReading.toFixed(3)),
-        meaning_score: Number(nextMeaning.toFixed(3)),
-        stability_days: Number(nextStability.toFixed(2)),
-        repetitions: isRight ? prevReps + 1 : prevReps,
-        lapses: isRight ? prevLapses : prevLapses + 1,
-        last_reviewed_at: nowIso,
-        next_review_at: nextReviewDate,
-        sync_dirty: 1,
-        updated_at: nowIso,
-      };
+        const updatedProgress: VerbProgress = {
+          verb_id: target.id,
+          reading_score: Number(nextReading.toFixed(3)),
+          meaning_score: Number(nextMeaning.toFixed(3)),
+          stability_days: Number(nextStability.toFixed(2)),
+          repetitions: isRight ? prevReps + 1 : prevReps,
+          lapses: isRight ? prevLapses : prevLapses + 1,
+          last_reviewed_at: nowIso,
+          next_review_at: nextReviewDate,
+          sync_dirty: 1,
+          updated_at: nowIso,
+        };
 
-      await db.execute(
-        `INSERT INTO user_verb_progress (
-          verb_id, reading_score, meaning_score, stability_days,
-          repetitions, lapses, last_reviewed_at, next_review_at, sync_dirty, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-        ON CONFLICT(verb_id) DO UPDATE SET
-          reading_score = excluded.reading_score,
-          meaning_score = excluded.meaning_score,
-          stability_days = excluded.stability_days,
-          repetitions = excluded.repetitions,
-          lapses = excluded.lapses,
-          last_reviewed_at = excluded.last_reviewed_at,
-          next_review_at = excluded.next_review_at,
-          sync_dirty = 1,
-          updated_at = excluded.updated_at;`,
-        [
-          updatedProgress.verb_id,
-          updatedProgress.reading_score,
-          updatedProgress.meaning_score,
-          updatedProgress.stability_days,
-          updatedProgress.repetitions,
-          updatedProgress.lapses,
-          updatedProgress.last_reviewed_at,
-          updatedProgress.next_review_at,
-          updatedProgress.updated_at,
-        ]
-      );
+        await db.execute(
+          `INSERT INTO user_verb_progress (
+            verb_id, reading_score, meaning_score, stability_days,
+            repetitions, lapses, last_reviewed_at, next_review_at, sync_dirty, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+          ON CONFLICT(verb_id) DO UPDATE SET
+            reading_score = excluded.reading_score,
+            meaning_score = excluded.meaning_score,
+            stability_days = excluded.stability_days,
+            repetitions = excluded.repetitions,
+            lapses = excluded.lapses,
+            last_reviewed_at = excluded.last_reviewed_at,
+            next_review_at = excluded.next_review_at,
+            sync_dirty = 1,
+            updated_at = excluded.updated_at;`,
+          [
+            updatedProgress.verb_id,
+            updatedProgress.reading_score,
+            updatedProgress.meaning_score,
+            updatedProgress.stability_days,
+            updatedProgress.repetitions,
+            updatedProgress.lapses,
+            updatedProgress.last_reviewed_at,
+            updatedProgress.next_review_at,
+            updatedProgress.updated_at,
+          ]
+        );
 
-      callbacksRef.current.onUpdateProgress?.(updatedProgress);
-      callbacksRef.current.onRecordProgress?.(updatedProgress);
-      callbacksRef.current.onProgressUpdate?.(updatedProgress);
+        callbacksRef.current.onUpdateProgress?.(updatedProgress);
+        callbacksRef.current.onRecordProgress?.(updatedProgress);
+        callbacksRef.current.onProgressUpdate?.(updatedProgress);
+      }
     } catch (err) {
       console.warn("[QuizView] Error saving progress/history:", err);
     }
@@ -670,10 +920,11 @@ export const QuizView: React.FC<QuizViewProps> = ({
     setQuestionsAnswered((q) => q + 1);
     setIdkCount((k) => k + 1);
     setStreak(0);
-    speakJapanese(
+    const firstSpeakable = (
       currentQuestion.targetVerb.furigana_reading ||
-        currentQuestion.targetVerb.kanji_form
-    );
+      currentQuestion.targetVerb.kanji_form
+    ).split("・")[0];
+    speakJapanese(firstSpeakable);
 
     await recordAttempt(
       currentQuestion.targetVerb,
@@ -700,16 +951,16 @@ export const QuizView: React.FC<QuizViewProps> = ({
 
     if (!isCurrentAnswered) return;
 
-    // Strictly stop when exact sessionLength is reached and show full scorecard
     if (sessionLength > 0 && questionsAnswered >= sessionLength) {
       setShowSessionSummary(true);
       return;
     }
 
     const nextUsed = new Set(usedVerbIds);
-    const pool = getFilteredPool(selectedLevels);
+    const { targetPool, distractorPool } = getFilteredPools(selectedLevels, selectedDecks);
     const nextQ = createQuestionFromPool(
-      pool,
+      targetPool,
+      distractorPool,
       nextUsed,
       quizMode,
       progressMapRef.current
@@ -735,8 +986,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
     sessionLength,
     questionsAnswered,
     usedVerbIds,
-    getFilteredPool,
+    getFilteredPools,
     selectedLevels,
+    selectedDecks,
     quizMode,
   ]);
 
@@ -850,6 +1102,25 @@ export const QuizView: React.FC<QuizViewProps> = ({
 
   const idkButtonLabel = IDK_BUTTON_VARIANTS[activeIndex % IDK_BUTTON_VARIANTS.length];
 
+  const deckOptions: Array<{ id: QuizDeckScope; label: string }> = [
+    { id: "all", label: "✨ All Vocab & Kanji" },
+    { id: "jlpt_kanji", label: "漢 JLPT Kanji" },
+    { id: "jlpt_vocab", label: "語 JLPT Vocab" },
+    { id: "jlpt_verbs", label: "⚡ JLPT Verbs" },
+    {
+      id: "logged_kanji",
+      label: `🔖 Logged & Learned Kanji (${loggedKanjiChars.size})`,
+    },
+    {
+      id: "logged_vocab",
+      label: `📌 Logged Vocab (${loggedVocabIds.size})`,
+    },
+    {
+      id: "mastered_verbs",
+      label: `🏆 Mastered Verbs (${masteredVerbIds.size})`,
+    },
+  ];
+
   return (
     <div className="max-w-4xl mx-auto space-y-4 pb-24 md:pb-10">
       {/* Top Mode & Sub-View Header Bar */}
@@ -865,7 +1136,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
             }`}
           >
             <BrainCircuit className="w-4 h-4" />
-            <span>Kanji Quiz</span>
+            <span>Kanji & Vocab Quiz</span>
           </button>
 
           <button
@@ -920,6 +1191,49 @@ export const QuizView: React.FC<QuizViewProps> = ({
         <>
           {/* Configuration & Live Score HUD */}
           <div className="p-4 rounded-3xl glass-card border border-border-glass space-y-3">
+            {/* Multi-Select Study Deck Focus Pills */}
+            <div className="flex items-center gap-1.5 flex-wrap pb-2.5 border-b border-border-glass">
+              <span
+                title="Click multiple deck pills to combine them into one quiz pool"
+                className="text-[11px] font-bold uppercase tracking-wider text-primary-muted mr-1 flex items-center gap-1"
+              >
+                <Layers className="w-3.5 h-3.5 text-accent" />
+                <span>Decks (Multi):</span>
+              </span>
+
+              {deckOptions.map((tab) => {
+                const isActive =
+                  tab.id === "all"
+                    ? selectedDecks.length === 0
+                    : selectedDecks.includes(tab.id);
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    aria-pressed={isActive}
+                    onClick={() => handleToggleDeckScope(tab.id)}
+                    className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-bold border transition-all ${
+                      isActive
+                        ? "bg-accent text-white border-accent shadow-neon-glow"
+                        : "glass-panel border-border-glass text-primary-muted hover:text-primary"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+
+              {selectedDecks.length > 1 && (
+                <button
+                  type="button"
+                  onClick={handleClearDecks}
+                  className="min-h-[34px] px-2.5 py-1 rounded-xl text-[11px] font-semibold text-amber-300 bg-amber-500/15 border border-amber-400/35 hover:bg-amber-500/25 transition-all"
+                >
+                  Reset ({selectedDecks.length} selected)
+                </button>
+              )}
+            </div>
+
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 p-1 rounded-full glass-panel overflow-x-auto">
                 <span className="text-[11px] font-semibold text-primary-muted px-2">
@@ -1023,7 +1337,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 </span>
                 <button
                   type="button"
-                  onClick={() => startNewSessionWith(selectedLevels, quizMode)}
+                  onClick={() => startNewSessionWith(selectedLevels, quizMode, selectedDecks)}
                   title="Restart quiz session"
                   className="p-1.5 rounded-lg glass-panel text-primary-muted hover:text-primary transition-colors"
                 >
@@ -1087,7 +1401,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => startNewSessionWith(selectedLevels, quizMode)}
+                  onClick={() => startNewSessionWith(selectedLevels, quizMode, selectedDecks)}
                   className="min-h-[42px] px-6 py-2 rounded-xl bg-accent text-white text-xs font-semibold flex items-center gap-2 shadow-neon-glow hover:opacity-95"
                 >
                   <RotateCcw className="w-4 h-4" />
@@ -1155,11 +1469,11 @@ export const QuizView: React.FC<QuizViewProps> = ({
                           type="button"
                           onClick={() =>
                             speakJapanese(
-                              q.targetVerb.furigana_reading || q.targetVerb.kanji_form
+                              (q.targetVerb.furigana_reading || q.targetVerb.kanji_form).split("・")[0]
                             )
                           }
                           className="p-1.5 rounded-lg glass-panel text-primary-muted hover:text-accent"
-                          title="Pronounce target verb"
+                          title="Pronounce target item"
                         >
                           <Volume2 className="w-4 h-4" />
                         </button>
@@ -1225,7 +1539,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
                     {currentQuestion.targetVerb.jlpt_level}
                   </span>
                   <span className="px-2.5 py-1 rounded-lg glass-panel text-primary-muted text-xs font-medium">
-                    {currentQuestion.targetVerb.verb_group}
+                    {currentQuestion.isKanjiItem
+                      ? `漢 Kanji • ${currentQuestion.targetVerb.verb_group}`
+                      : currentQuestion.targetVerb.verb_group}
                   </span>
                   <span className="text-xs text-primary-muted tabular-nums font-medium">
                     Question {activeIndex + 1}
@@ -1262,8 +1578,10 @@ export const QuizView: React.FC<QuizViewProps> = ({
                     type="button"
                     onClick={() =>
                       speakJapanese(
-                        currentQuestion.targetVerb.furigana_reading ||
+                        (
+                          currentQuestion.targetVerb.furigana_reading ||
                           currentQuestion.targetVerb.kanji_form
+                        ).split("・")[0]
                       )
                     }
                     aria-label="Listen to pronunciation"
@@ -1295,7 +1613,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
                   {currentQuestion.mode === "kanji_to_meaning" &&
                     "Select the correct English meaning"}
                   {currentQuestion.mode === "kanji_to_reading" &&
-                    "Select the correct Hiragana reading"}
+                    (currentQuestion.isKanjiItem
+                      ? "Select the correct On/Kun reading"
+                      : "Select the correct Hiragana reading")}
                   {currentQuestion.mode === "meaning_to_kanji" &&
                     "Select the matching Japanese Kanji"}
                 </p>
@@ -1312,7 +1632,13 @@ export const QuizView: React.FC<QuizViewProps> = ({
                     )}
                   </div>
                 ) : (
-                  <div className="font-jp text-4xl sm:text-5xl font-bold text-primary tracking-wide pt-2">
+                  <div
+                    className={`font-jp font-bold text-primary tracking-wide pt-2 ${
+                      currentQuestion.isKanjiItem
+                        ? "text-5xl sm:text-6xl"
+                        : "text-4xl sm:text-5xl"
+                    }`}
+                  >
                     {renderRubyText(
                       currentQuestion.targetVerb,
                       currentQuestion.mode === "kanji_to_reading"
@@ -1552,7 +1878,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
             </div>
           ) : (
             <div className="p-8 rounded-3xl glass-card border border-border-glass text-center text-sm text-primary-muted">
-              Not enough verbs match the current filter. Select additional JLPT levels above.
+              Not enough items match the current filter. Select additional JLPT levels or switch deck scope above.
             </div>
           )}
         </>
@@ -1684,7 +2010,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
                         <button
                           type="button"
                           onClick={() =>
-                            speakJapanese(item.furigana_reading || item.kanji_form)
+                            speakJapanese(
+                              (item.furigana_reading || item.kanji_form).split("・")[0]
+                            )
                           }
                           aria-label="Pronounce word"
                           className="p-1.5 rounded-lg text-primary-muted hover:text-accent hover:bg-surface-hover"

@@ -19,7 +19,9 @@ import {
   IndustryTrack,
   getDatabase,
 } from "../lib/db";
+import { getAllStudyLogs, StudyLogEntry } from "../lib/studyLogs";
 import seedKanji from "../data/seed_kanji.json";
+import seedVerbs from "../data/seed_verbs.json";
 
 export interface MasteryViewProps {
   verbs: Verb[];
@@ -53,6 +55,10 @@ interface JlptOfficialThreshold {
 }
 
 const ALL_SEED_KANJI = seedKanji as unknown as SeedKanjiItem[];
+const SEED_CATEGORY_BY_ID = new Map<number, string>(
+  (seedVerbs as any[]).map((v) => [Number(v.id), v.category || "verb"])
+);
+
 const KANJI_RE = /[\u4e00-\u9faf\u3400-\u4dbf]/g;
 const MASTERY_THRESHOLD = 0.8; // 80% combined reading + meaning FSRS score
 
@@ -179,6 +185,12 @@ function extractKanjiFromItem(item: Verb): string[] {
   return Array.from(new Set(item.kanji_form.match(KANJI_RE) || []));
 }
 
+function resolveItemCategory(item: Verb): string {
+  const rawCat = (item as Verb & { category?: string }).category;
+  if (rawCat && rawCat !== "verb") return rawCat;
+  return SEED_CATEGORY_BY_ID.get(Number(item.id)) || rawCat || "verb";
+}
+
 export const MasteryView: React.FC<MasteryViewProps> = ({
   verbs = [],
   profile,
@@ -186,6 +198,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
   onUpdateProfile,
 }) => {
   const [checkins, setCheckins] = useState<DailyCheckinRow[]>([]);
+  const [studyLogs, setStudyLogs] = useState<StudyLogEntry[]>([]);
   const [trophyFilter, setTrophyFilter] = useState<"mastered" | "logged">("mastered");
   const [quizStats, setQuizStats] = useState<{
     totalAnswered: number;
@@ -200,6 +213,21 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
   });
 
   const todayKey = formatDateKey(new Date());
+
+  const loadStudyLogs = useCallback(async () => {
+    try {
+      const logs = await getAllStudyLogs();
+      setStudyLogs(logs);
+    } catch {
+      setStudyLogs([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStudyLogs();
+    window.addEventListener("study-logs-updated", loadStudyLogs);
+    return () => window.removeEventListener("study-logs-updated", loadStudyLogs);
+  }, [loadStudyLogs]);
 
   const loadStreakAndQuizTelemetry = useCallback(async () => {
     try {
@@ -355,7 +383,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
   const fishMascot = getFishMascotForStreak(currentStreak);
 
   // =========================================================================
-  // TROPHY & MILESTONE ENGINE (Kanji Logged, Kanji Mastered, Verbs Mastered)
+  // TROPHY & MILESTONE ENGINE (Kanji Logged, Kanji Mastered, Verbs & Vocab)
   // =========================================================================
   const trophyMetrics = useMemo(() => {
     const kanjiInfoMap = new Map<string, SeedKanjiItem>();
@@ -363,7 +391,15 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
       kanjiInfoMap.set(k.character, k);
     }
 
-    // Track score sums & counts per kanji character from reviewed/scored items
+    const manuallyLoggedKanjiSet = new Set(
+      studyLogs.filter((l) => l.item_type === "kanji").map((l) => l.item_key)
+    );
+    const manuallyLoggedWordIds = new Set(
+      studyLogs
+        .filter((l) => l.item_type === "vocab" || l.item_type === "verb")
+        .map((l) => Number(l.item_key))
+    );
+
     const kanjiAccumulator = new Map<
       string,
       { totalScore: number; count: number; maxScore: number }
@@ -378,16 +414,15 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
     let totalOtherVocabCount = 0;
 
     for (const item of verbs) {
-      const cat = (item as Verb & { category?: string }).category || "verb";
+      const cat = resolveItemCategory(item);
       const isVerb = cat === "verb";
       if (isVerb) totalVerbsCount++;
       else totalOtherVocabCount++;
 
       const prog = safeGetProgress(progressMap, item.id);
-      if (!prog) continue;
-
-      const avgScore = (prog.reading_score + prog.meaning_score) / 2;
-      const isLogged = prog.repetitions > 0 || avgScore > 0;
+      const avgScore = prog ? (prog.reading_score + prog.meaning_score) / 2 : 0;
+      const isReviewed = Boolean(prog && (prog.repetitions > 0 || avgScore > 0));
+      const isLogged = isReviewed || manuallyLoggedWordIds.has(item.id);
       const isMastered = avgScore >= MASTERY_THRESHOLD;
 
       if (isLogged) {
@@ -399,7 +434,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
         else masteredOtherVocabCount++;
       }
 
-      if (isLogged) {
+      if (isReviewed) {
         const chars = extractKanjiFromItem(item);
         for (const ch of chars) {
           const prev = kanjiAccumulator.get(ch) || {
@@ -416,6 +451,13 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
       }
     }
 
+    // Ensure manually logged kanji from Kanji Lab also appear in the accumulator
+    for (const ch of manuallyLoggedKanjiSet) {
+      if (!kanjiAccumulator.has(ch)) {
+        kanjiAccumulator.set(ch, { totalScore: 0, count: 1, maxScore: 0 });
+      }
+    }
+
     const loggedKanjiList: Array<{
       character: string;
       jlpt_level: JlptLevel;
@@ -426,8 +468,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
 
     for (const [char, stats] of kanjiAccumulator.entries()) {
       const avg = stats.totalScore / stats.count;
-      // Consider a kanji mastered if its average score across studied words >= 80%
-      // OR its strongest studied word reaches >= 85%
       const isMastered = avg >= MASTERY_THRESHOLD || stats.maxScore >= 0.85;
       const meta = kanjiInfoMap.get(char);
 
@@ -440,7 +480,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
       });
     }
 
-    // Sort mastered first, then highest score
     loggedKanjiList.sort(
       (a, b) =>
         Number(b.isMastered) - Number(a.isMastered) || b.scorePct - a.scorePct
@@ -448,7 +487,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
 
     const masteredKanjiList = loggedKanjiList.filter((k) => k.isMastered);
 
-    // Level-by-level breakdown (N5 -> N1)
     const levelBreakdown = JLPT_LEVELS.map((lvl) => {
       const totalKanjiInLevel =
         ALL_SEED_KANJI.filter((k) => k.jlpt_level === lvl).length ||
@@ -487,7 +525,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
       masteredKanjiList,
       levelBreakdown,
     };
-  }, [verbs, progressMap]);
+  }, [verbs, progressMap, studyLogs]);
 
   const analytics = useMemo(() => {
     const targetLvl = profile?.target_jlpt || "N5";
@@ -659,7 +697,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
         </div>
       </div>
 
-      {/* 2. NEW: Trophy & Milestone Showcase (Logged Kanji, Mastered Kanji, Mastered Verbs & Vocab) */}
+      {/* 2. Trophy & Milestone Showcase */}
       <div className="p-5 sm:p-6 rounded-3xl glass-card border border-amber-400/30 space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -706,7 +744,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-primary-muted">
-              Unique kanji encountered & scored
+              Manually logged & scored kanji
             </p>
           </div>
 
@@ -722,7 +760,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-primary-muted">
-              {trophyMetrics.loggedVerbsCount.toLocaleString()} verbs logged in FSRS
+              {trophyMetrics.loggedVerbsCount.toLocaleString()} verbs logged
             </p>
           </div>
 
@@ -738,7 +776,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-primary-muted">
-              Nouns, adjectives & time words
+              {trophyMetrics.loggedOtherVocabCount.toLocaleString()} nouns/adj/time logged
             </p>
           </div>
         </div>
@@ -824,7 +862,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
             </div>
 
             <span className="text-[11px] text-primary-muted">
-              Every kanji you master in Flashcards or Quiz is immortalized here
+              Every kanji you log or master is immortalized & synced across devices
             </span>
           </div>
 
@@ -832,7 +870,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
             <div className="p-6 rounded-2xl glass-panel border border-border-glass text-center text-xs text-primary-muted">
               {trophyFilter === "mastered"
                 ? "No kanji at ≥80% mastery yet — rate words 'Easy' in Present or ace them in Quiz to unlock your first kanji trophy!"
-                : "Start reviewing words in Present or Quiz to begin logging kanji characters here."}
+                : "Log kanji in Kanji Lab or review words in Present/Quiz to see them here."}
             </div>
           ) : (
             <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-2 max-h-[240px] overflow-y-auto pr-1">
