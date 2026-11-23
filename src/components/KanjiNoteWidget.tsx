@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Plus,
   X,
@@ -13,7 +13,7 @@ import {
   Type,
   ArrowRight,
 } from "lucide-react";
-import { getDatabase } from "../lib/db";
+import { getDatabase, syncWithTurso } from "../lib/db";
 import { speakJapanese } from "../lib/audio";
 import seedVerbs from "../data/seed_verbs.json";
 
@@ -43,10 +43,8 @@ const LATIN_RE = /[a-zA-Z]/;
 
 // --- Romaji to Hiragana Converter (supports Hepburn, Kunrei-shiki, sokuon, and n/nn) ---
 const ROMAJI_TABLE: Record<string, string> = {
-  // 4-char
   ltsu: "っ",
   xtsu: "っ",
-  // 3-char
   kya: "きゃ", kyu: "きゅ", kyo: "きょ",
   sha: "しゃ", shi: "し", shu: "しゅ", sho: "しょ", she: "しぇ",
   sya: "しゃ", syu: "しゅ", syo: "しょ",
@@ -68,7 +66,6 @@ const ROMAJI_TABLE: Record<string, string> = {
   xya: "ゃ", xyu: "ゅ", xyo: "ょ",
   lya: "ゃ", lyu: "ゅ", lyo: "ょ",
   xtu: "っ", ltu: "っ",
-  // 2-char
   ka: "か", ki: "き", ku: "く", ke: "け", ko: "こ",
   sa: "さ", si: "し", su: "す", se: "せ", so: "そ",
   ta: "た", ti: "ち", tu: "つ", te: "て", to: "と",
@@ -88,7 +85,6 @@ const ROMAJI_TABLE: Record<string, string> = {
   va: "ゔぁ", vi: "ゔぃ", vu: "ゔ", ve: "ゔぇ", vo: "ゔぉ",
   xa: "ぁ", xi: "ぃ", xu: "ぅ", xe: "ぇ", xo: "ぉ",
   la: "ぁ", li: "ぃ", lu: "ぅ", le: "ぇ", lo: "ぉ",
-  // 1-char
   a: "あ", i: "い", u: "う", e: "え", o: "お",
   "-": "ー",
 };
@@ -104,7 +100,6 @@ function romajiToHiragana(input: string, finalizeTrailingN = false): string {
   while (i < s.length) {
     const ch = s[i];
 
-    // Double consonant -> small っ (e.g., kk, tt, pp, ss, tch)
     if (i + 2 < s.length && s.slice(i, i + 3) === "tch") {
       out += "っ";
       i += 1;
@@ -121,7 +116,6 @@ function romajiToHiragana(input: string, finalizeTrailingN = false): string {
       continue;
     }
 
-    // 'n' / 'nn' / "n'" handling -> ん
     if (ch === "n") {
       const next = s[i + 1];
       if (next === "n" || next === "'") {
@@ -141,7 +135,6 @@ function romajiToHiragana(input: string, finalizeTrailingN = false): string {
       }
     }
 
-    // Longest match (4 -> 3 -> 2 -> 1)
     let matched = false;
     for (let len = 4; len >= 1; len--) {
       if (i + len <= s.length) {
@@ -170,7 +163,6 @@ function katakanaToHiragana(str: string): string {
   );
 }
 
-// Core 1-kana, single-kanji, and common non-verb N5-N2 vocabulary for instant offline Kanji <-> Furigana
 const CORE_LEXICON: KanjiCandidate[] = [
   { kanji: "下", furigana: "した", meaning: "below, under, beneath, bottom", jlpt_level: "N5", origin: "Core" },
   { kanji: "下", furigana: "もと", meaning: "under (guidance/supervision), base", jlpt_level: "N3", origin: "Core" },
@@ -258,7 +250,6 @@ const CORE_LEXICON: KanjiCandidate[] = [
   { kanji: "漢字", furigana: "かんじ", meaning: "kanji, Chinese characters", jlpt_level: "N4", origin: "Core" },
 ];
 
-// Build an offline lookup index from seed_verbs.json (verbs + suru-stems + ruby_segments)
 const CORPUS_INDEX: KanjiCandidate[] = (() => {
   const entries: KanjiCandidate[] = [];
   const seen = new Set<string>();
@@ -281,7 +272,6 @@ const CORPUS_INDEX: KanjiCandidate[] = (() => {
 
     pushUnique({ kanji, furigana: reading, meaning, jlpt_level: jlpt, origin: "Corpus" });
 
-    // Index noun stems of 〜する verbs (e.g. 勉強する -> 勉強 / べんきょう)
     if (kanji.endsWith("する") && reading.endsWith("する") && kanji.length > 2) {
       pushUnique({
         kanji: kanji.slice(0, -2),
@@ -292,7 +282,6 @@ const CORPUS_INDEX: KanjiCandidate[] = (() => {
       });
     }
 
-    // Index character/compound ruby_segments so individual kanji resolve readings offline
     if (Array.isArray(v.ruby_segments)) {
       for (const seg of v.ruby_segments) {
         if (seg?.base && seg?.ruby && KANJI_RE.test(seg.base)) {
@@ -315,7 +304,6 @@ function searchOfflineCandidates(rawQuery: string): KanjiCandidate[] {
   const trimmed = rawQuery.trim();
   if (!trimmed) return [];
 
-  // Normalize Romaji or Katakana into Hiragana for matching
   const normalizedQuery = LATIN_RE.test(trimmed)
     ? romajiToHiragana(trimmed, true)
     : katakanaToHiragana(trimmed);
@@ -379,7 +367,6 @@ export const KanjiNoteWidget: React.FC = () => {
   const [jlptInput, setJlptInput] = useState("");
   const [furiganaOnlyMode, setFuriganaOnlyMode] = useState(false);
 
-  // Explicit state tracking which input the user is driving
   const [activeDriver, setActiveDriver] = useState<"furigana" | "kanji">("furigana");
   const isComposingRef = useRef<boolean>(false);
   const userEditedFuriganaRef = useRef<boolean>(false);
@@ -394,7 +381,7 @@ export const KanjiNoteWidget: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
 
   // 1. Ensure SQLite table exists & load saved kanji notes
-  const ensureTableAndLoad = async () => {
+  const ensureTableAndLoad = useCallback(async () => {
     const db = await getDatabase();
     await db.execute(`
       CREATE TABLE IF NOT EXISTS learned_kanji_notes (
@@ -415,116 +402,41 @@ export const KanjiNoteWidget: React.FC = () => {
       `SELECT * FROM learned_kanji_notes WHERE deleted_at IS NULL ORDER BY learned_at DESC;`
     );
     setNotes(rows || []);
-  };
+  }, []);
 
-  // Resolve active userId for Neon sync
-  const resolveSyncUserId = async (): Promise<string> => {
-    const stored = localStorage.getItem("jlpt_user_id");
-    if (stored) return stored;
-
-    try {
-      const db = await getDatabase();
-      const profiles = await db.select<Array<{ id: string }>>(
-        `SELECT id FROM user_profiles LIMIT 1;`
-      );
-      if (profiles?.[0]?.id) return profiles[0].id;
-    } catch {
-      // Fallback to default guest ID
-    }
-    return "guest_user";
-  };
-
-  // Sync dirty rows with Neon edge endpoint if configured
-  const syncKanjiNotes = async () => {
-    const apiUrl = import.meta.env.VITE_SYNC_API_URL;
-    if (!apiUrl || (typeof navigator !== "undefined" && !navigator.onLine)) return;
-
+  // Bidirectional sync directly with Turso Cloud
+  const handleSyncKanjiNotes = useCallback(async () => {
     try {
       setIsSyncing(true);
-      const db = await getDatabase();
-      const userId = await resolveSyncUserId();
-      const dirtyRows = await db.select<LearnedKanjiNote[]>(
-        `SELECT * FROM learned_kanji_notes WHERE sync_dirty = 1;`
-      );
-      const lastSync =
-        localStorage.getItem("jlpt_kanji_notes_last_sync") || "1970-01-01T00:00:00.000Z";
-      const token = localStorage.getItem("jlpt_auth_token") || "guest_token";
-
-      const res = await fetch(`${apiUrl.replace(/\/$/, "")}/api/sync`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          userId,
-          lastSyncedAt: lastSync,
-          kanji_notes: dirtyRows,
-        }),
-      });
-
-      if (!res.ok) return;
-      const data = await res.json();
-
-      for (const row of dirtyRows) {
-        await db.execute(`UPDATE learned_kanji_notes SET sync_dirty = 0 WHERE id = ?;`, [row.id]);
-      }
-
-      if (Array.isArray(data.kanji_notes)) {
-        for (const remote of data.kanji_notes) {
-          await db.execute(
-            `INSERT INTO learned_kanji_notes (
-              id, kanji, furigana, meaning, source_note, jlpt_level,
-              learned_at, sync_dirty, updated_at, deleted_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-              kanji = excluded.kanji,
-              furigana = excluded.furigana,
-              meaning = excluded.meaning,
-              source_note = excluded.source_note,
-              jlpt_level = excluded.jlpt_level,
-              learned_at = excluded.learned_at,
-              sync_dirty = 0,
-              updated_at = excluded.updated_at,
-              deleted_at = excluded.deleted_at
-            WHERE excluded.updated_at > learned_kanji_notes.updated_at;`,
-            [
-              remote.id,
-              remote.kanji,
-              remote.furigana,
-              remote.meaning,
-              remote.source_note || "",
-              remote.jlpt_level || "",
-              remote.learned_at,
-              remote.updated_at,
-              remote.deleted_at || null,
-            ]
-          );
-        }
-      }
-
-      localStorage.setItem("jlpt_kanji_notes_last_sync", data.serverTime || new Date().toISOString());
+      await syncWithTurso(true);
       await ensureTableAndLoad();
-      window.dispatchEvent(new Event("kanji-notes-updated"));
     } catch (err) {
-      console.warn("[KanjiNoteWidget] Cloud sync skipped:", err);
+      console.warn("[KanjiNoteWidget] Turso sync skipped:", err);
     } finally {
       setIsSyncing(false);
     }
-  };
+  }, [ensureTableAndLoad]);
 
   useEffect(() => {
-    ensureTableAndLoad().then(() => syncKanjiNotes());
-  }, []);
+    ensureTableAndLoad();
 
-  // Live Romaji -> Hiragana conversion preview when user types on a Romaji keyboard
+    const onNotesUpdated = () => {
+      ensureTableAndLoad();
+    };
+    window.addEventListener("kanji-notes-updated", onNotesUpdated);
+    window.addEventListener("turso-sync-completed", onNotesUpdated);
+    return () => {
+      window.removeEventListener("kanji-notes-updated", onNotesUpdated);
+      window.removeEventListener("turso-sync-completed", onNotesUpdated);
+    };
+  }, [ensureTableAndLoad]);
+
   const liveRomajiHiragana = useMemo(() => {
     const trimmed = furiganaInput.trim();
     if (!trimmed || !LATIN_RE.test(trimmed)) return "";
     return romajiToHiragana(trimmed, true);
   }, [furiganaInput]);
 
-  // Normalized query for dictionary lookup (converts Romaji/Katakana -> Hiragana automatically)
   const activeSearchQuery = useMemo(() => {
     const k = kanjiInput.trim();
     const f = furiganaInput.trim();
@@ -535,12 +447,10 @@ export const KanjiNoteWidget: React.FC = () => {
     return k;
   }, [activeDriver, furiganaInput, kanjiInput]);
 
-  // 2. Instant synchronous offline candidates
   const localCandidates = useMemo<KanjiCandidate[]>(() => {
     return searchOfflineCandidates(activeSearchQuery);
   }, [activeSearchQuery]);
 
-  // 3. Debounced CORS-safe online dictionary lookup (Jotoba primary + Jisho proxy fallback)
   useEffect(() => {
     const q = activeSearchQuery;
     if (!q) {
@@ -555,7 +465,6 @@ export const KanjiNoteWidget: React.FC = () => {
         const exactItems: KanjiCandidate[] = [];
         const otherItems: KanjiCandidate[] = [];
 
-        // Primary: Jotoba API (supports browser & Tauri WebView CORS natively)
         const jotobaRes = await fetch("https://jotoba.de/api/search/words", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -603,7 +512,6 @@ export const KanjiNoteWidget: React.FC = () => {
     return () => clearTimeout(timer);
   }, [activeSearchQuery]);
 
-  // Merge deduplicated candidates (exact matches first)
   const allCandidates = useMemo(() => {
     const seen = new Set<string>();
     const combined: KanjiCandidate[] = [];
@@ -617,7 +525,6 @@ export const KanjiNoteWidget: React.FC = () => {
     return combined.slice(0, 14);
   }, [localCandidates, remoteCandidates]);
 
-  // Automatic Kanji -> Furigana + Meaning resolution whenever user types in Kanji box
   useEffect(() => {
     if (activeDriver !== "kanji" || furiganaOnlyMode) return;
     const kTrimmed = kanjiInput.trim();
@@ -644,14 +551,12 @@ export const KanjiNoteWidget: React.FC = () => {
     }
   }, [allCandidates, kanjiInput, activeDriver, furiganaOnlyMode]);
 
-  // Distinct Furigana reading options (shown under Step 1)
   const furiganaOptions = useMemo(() => {
     const fTrimmed = furiganaInput.trim();
     const kTrimmed = kanjiInput.trim();
     const seen = new Set<string>();
     const options: Array<{ reading: string; sampleMeaning: string; jlpt: string }> = [];
 
-    // If user typed Romaji, offer the converted Hiragana first!
     if (fTrimmed && LATIN_RE.test(fTrimmed)) {
       const converted = romajiToHiragana(fTrimmed, true);
       if (converted && !LATIN_RE.test(converted)) {
@@ -673,7 +578,6 @@ export const KanjiNoteWidget: React.FC = () => {
       });
     }
 
-    // Prioritize readings belonging to the currently entered Kanji
     const orderedCandidates = kTrimmed
       ? [
           ...allCandidates.filter((c) => c.kanji === kTrimmed),
@@ -696,7 +600,6 @@ export const KanjiNoteWidget: React.FC = () => {
     return options;
   }, [furiganaInput, kanjiInput, allCandidates]);
 
-  // Distinct Kanji options (shown under Step 2 so user can pick WHICH kanji they meant)
   const kanjiOptions = useMemo(() => {
     const seen = new Set<string>();
     const options: KanjiCandidate[] = [];
@@ -713,7 +616,6 @@ export const KanjiNoteWidget: React.FC = () => {
     return options;
   }, [allCandidates]);
 
-  // Handler: User selects a Furigana reading pill in Step 1
   const handleSelectFuriganaOption = (reading: string, sampleMeaning?: string, jlpt?: string) => {
     userEditedFuriganaRef.current = true;
     setFuriganaInput(reading);
@@ -738,7 +640,6 @@ export const KanjiNoteWidget: React.FC = () => {
     }
   };
 
-  // Handler: User toggles "Furigana Only (No Kanji)" mode
   const handleEnableFuriganaOnly = () => {
     const raw = furiganaInput.trim();
     const cleanKana = LATIN_RE.test(raw) ? romajiToHiragana(raw, true) : raw;
@@ -753,7 +654,6 @@ export const KanjiNoteWidget: React.FC = () => {
     }
   };
 
-  // Handler: User clicks a Kanji candidate card in Step 2 -> maps Kanji + Furigana + Meaning + JLPT
   const handleSelectKanjiOption = (candidate: KanjiCandidate) => {
     setFuriganaOnlyMode(false);
     setKanjiInput(candidate.kanji);
@@ -764,11 +664,9 @@ export const KanjiNoteWidget: React.FC = () => {
     userEditedMeaningRef.current = false;
   };
 
-  // Handler: User types in Step 1 (Furigana / Romaji)
   const handleFuriganaInputChange = (val: string) => {
     const trimmed = val.trim();
 
-    // If user types Kanji directly into Step 1, route it to Step 2 and auto-fill Furigana
     if (!isComposingRef.current && KANJI_RE.test(trimmed)) {
       setActiveDriver("kanji");
       userEditedFuriganaRef.current = false;
@@ -795,7 +693,6 @@ export const KanjiNoteWidget: React.FC = () => {
     setFuriganaInput(val);
   };
 
-  // Handler: User types in Step 2 (Kanji Form) -> synchronously + asynchronously fills Furigana & Meaning
   const handleKanjiInputChange = (val: string) => {
     setActiveDriver("kanji");
     userEditedFuriganaRef.current = false;
@@ -811,7 +708,6 @@ export const KanjiNoteWidget: React.FC = () => {
       return;
     }
 
-    // Immediate synchronous resolution so Furigana appears on the exact same keystroke
     const immediateMatches = searchOfflineCandidates(trimmed);
     const best =
       immediateMatches.find((c) => c.kanji === trimmed && !KANJI_RE.test(c.furigana)) ||
@@ -857,7 +753,6 @@ export const KanjiNoteWidget: React.FC = () => {
       : `${cleanFurigana} (Furigana)`;
     setSaveFeedback(`Saved ${label}`);
 
-    // Reset form
     setActiveDriver("furigana");
     userEditedFuriganaRef.current = false;
     userEditedMeaningRef.current = false;
@@ -870,7 +765,8 @@ export const KanjiNoteWidget: React.FC = () => {
     setRemoteCandidates([]);
     setTimeout(() => setSaveFeedback(null), 2500);
 
-    syncKanjiNotes();
+    // Push immediately to Turso Cloud
+    syncWithTurso(false).catch(() => {});
   };
 
   const handleDeleteNote = async (id: string) => {
@@ -882,7 +778,7 @@ export const KanjiNoteWidget: React.FC = () => {
     );
     await ensureTableAndLoad();
     window.dispatchEvent(new Event("kanji-notes-updated"));
-    syncKanjiNotes();
+    syncWithTurso(false).catch(() => {});
   };
 
   const filteredNotes = useMemo(() => {
@@ -899,7 +795,6 @@ export const KanjiNoteWidget: React.FC = () => {
 
   return (
     <>
-      {/* Floating Bottom-Right "+ Kanji" Trigger Button (>= 44x44px touch target) */}
       <button
         type="button"
         onClick={() => setIsOpen(true)}
@@ -915,7 +810,6 @@ export const KanjiNoteWidget: React.FC = () => {
         )}
       </button>
 
-      {/* Glassmorphic Quick-Log & Journal Modal */}
       {isOpen && (
         <div
           className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm"
@@ -925,7 +819,6 @@ export const KanjiNoteWidget: React.FC = () => {
             className="w-full max-w-lg rounded-3xl glass-card bg-surface-card border border-border-glass shadow-2xl overflow-hidden flex flex-col max-h-[88vh]"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-border-glass">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-accent/15 text-accent flex items-center justify-center font-bold">
@@ -942,8 +835,8 @@ export const KanjiNoteWidget: React.FC = () => {
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={syncKanjiNotes}
-                  title="Sync notes with cloud"
+                  onClick={handleSyncKanjiNotes}
+                  title="Sync notes with Turso cloud"
                   aria-label="Sync kanji notes"
                   className="p-2 rounded-xl text-primary-muted hover:text-primary hover:bg-surface-hover transition-colors"
                 >
@@ -960,7 +853,6 @@ export const KanjiNoteWidget: React.FC = () => {
               </div>
             </div>
 
-            {/* Sub-Tab Switcher */}
             <div className="flex gap-2 px-5 pt-3">
               <button
                 type="button"
@@ -986,11 +878,9 @@ export const KanjiNoteWidget: React.FC = () => {
               </button>
             </div>
 
-            {/* Body */}
             <div className="p-5 overflow-y-auto space-y-4">
               {activeSubTab === "add" ? (
                 <form onSubmit={handleSaveNote} className="space-y-4">
-                  {/* STEP 1: Furigana / Romaji Input + Furigana Reading Pills */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <label className="text-xs font-semibold text-primary">
@@ -1035,7 +925,6 @@ export const KanjiNoteWidget: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Live Romaji -> Hiragana Conversion Banner */}
                     {liveRomajiHiragana && (
                       <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-accent/10 border border-accent/25 text-xs">
                         <span className="flex items-center gap-1.5 text-primary">
@@ -1055,7 +944,6 @@ export const KanjiNoteWidget: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Furigana Reading Pills */}
                     {furiganaOptions.length > 0 && (
                       <div>
                         <p className="text-[11px] font-medium text-primary-muted mb-1">
@@ -1092,7 +980,6 @@ export const KanjiNoteWidget: React.FC = () => {
                     )}
                   </div>
 
-                  {/* STEP 2: Smart Kanji Form (Typing Kanji auto-types Furigana in Step 1 + Meaning in Step 3) */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <label className="text-xs font-semibold text-primary">
@@ -1146,7 +1033,6 @@ export const KanjiNoteWidget: React.FC = () => {
                       />
                     </div>
 
-                    {/* Smart Kanji Candidate Cards */}
                     {!furiganaOnlyMode && kanjiOptions.length > 0 && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1">
                         {kanjiOptions.map((item, idx) => {
@@ -1190,7 +1076,6 @@ export const KanjiNoteWidget: React.FC = () => {
                     )}
                   </div>
 
-                  {/* STEP 3: Auto-filled Meaning */}
                   <div>
                     <label className="block text-xs font-semibold text-primary mb-1">
                       3. Meaning{" "}
@@ -1228,7 +1113,6 @@ export const KanjiNoteWidget: React.FC = () => {
                 </form>
               ) : (
                 <div className="space-y-3">
-                  {/* Search Saved History */}
                   <div className="relative">
                     <Search className="w-4 h-4 text-primary-muted absolute left-3.5 top-3.5" />
                     <input

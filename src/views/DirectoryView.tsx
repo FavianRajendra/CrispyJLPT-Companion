@@ -18,6 +18,7 @@ import {
   JlptLevel,
   IndustryTrack,
   getDatabase,
+  syncWithTurso,
 } from "../lib/db";
 import { speakJapanese } from "../lib/audio";
 
@@ -84,7 +85,6 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({
   const [showFurigana, setShowFurigana] = useState<boolean>(true);
   const [visibleLimit, setVisibleLimit] = useState<number>(60);
 
-  // Logged kanji notes from KanjiNoteWidget
   const [loggedNotes, setLoggedNotes] = useState<LoggedKanjiNoteItem[]>([]);
   const [selectedVerb, setSelectedVerb] = useState<Verb | null>(null);
 
@@ -119,9 +119,11 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({
 
     const handleRefresh = () => loadLoggedKanjiNotes();
     window.addEventListener("kanji-notes-updated", handleRefresh);
+    window.addEventListener("turso-sync-completed", handleRefresh);
     window.addEventListener("focus", handleRefresh);
     return () => {
       window.removeEventListener("kanji-notes-updated", handleRefresh);
+      window.removeEventListener("turso-sync-completed", handleRefresh);
       window.removeEventListener("focus", handleRefresh);
     };
   }, [loadLoggedKanjiNotes]);
@@ -135,12 +137,13 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({
         [now, now, id]
       );
       await loadLoggedKanjiNotes();
+      window.dispatchEvent(new Event("kanji-notes-updated"));
+      syncWithTurso(false).catch(() => {});
     } catch (err) {
       console.warn("[DirectoryView] Failed to delete logged note:", err);
     }
   };
 
-  // Filtered Logged Kanji Notes
   const filteredNotes = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return loggedNotes.filter((n) => {
@@ -157,7 +160,6 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({
     });
   }, [loggedNotes, searchQuery, selectedLevel]);
 
-  // Filtered Corpus Verbs
   const filteredVerbs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return verbs.filter((v) => {
@@ -177,17 +179,14 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({
     });
   }, [verbs, searchQuery, selectedLevel, selectedTrack]);
 
-  // Reset pagination when filters change
   useEffect(() => {
     setVisibleLimit(60);
   }, [searchQuery, selectedLevel, selectedTrack, sourceTab]);
 
   return (
     <div className="max-w-5xl mx-auto space-y-4 pb-24 md:pb-10">
-      {/* Top Search & Source Switcher Card */}
       <div className="p-4 rounded-3xl glass-card border border-border-glass space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* Source Filter Tabs */}
           <div className="flex items-center gap-1.5 p-1 rounded-2xl glass-panel overflow-x-auto">
             <button
               type="button"
@@ -226,7 +225,6 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({
             </button>
           </div>
 
-          {/* Furigana Visibility Toggle */}
           <button
             type="button"
             onClick={() => setShowFurigana((prev) => !prev)}
@@ -241,7 +239,6 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({
           </button>
         </div>
 
-        {/* Search Bar */}
         <div className="relative">
           <Search className="w-4 h-4 text-primary-muted absolute left-3.5 top-3.5" />
           <input
@@ -253,7 +250,6 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({
           />
         </div>
 
-        {/* JLPT & Industry Filters */}
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <div className="flex items-center gap-1 p-1 rounded-full glass-panel overflow-x-auto">
             <button
@@ -315,7 +311,6 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({
         </div>
       </div>
 
-      {/* SECTION 1: MY LOGGED KANJI & FURIGANA NOTES (FROM + KANJI WIDGET) */}
       {(sourceTab === "all" || sourceTab === "notes") && (
         <div className="space-y-2.5">
           <div className="flex items-center justify-between px-1">
@@ -418,7 +413,6 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({
         </div>
       )}
 
-      {/* SECTION 2: BUNDLED JLPT VERB CORPUS */}
       {(sourceTab === "all" || sourceTab === "corpus") && (
         <div className="space-y-2.5 pt-1">
           <div className="flex items-center justify-between px-1">
@@ -501,7 +495,6 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({
         </div>
       )}
 
-      {/* Verb Detail Modal */}
       {selectedVerb && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
