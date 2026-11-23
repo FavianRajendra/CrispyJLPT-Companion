@@ -30,7 +30,7 @@ export interface UserProfile {
   current_jlpt: JlptLevel;
   target_jlpt: JlptLevel;
   target_industries: IndustryTrack[];
-  industry_blend_ratio: number; // e.g. 0.70 = 70% exam, 30% industry
+  industry_blend_ratio: number;
   daily_goal: number;
   updated_at: string;
 }
@@ -97,14 +97,14 @@ export function normalizeUserProfile(raw: any): UserProfile {
 
 export interface VerbProgress {
   verb_id: number;
-  reading_score: number; // 0.0 - 1.0
-  meaning_score: number; // 0.0 - 1.0
-  stability_days: number; // FSRS memory stability S
+  reading_score: number;
+  meaning_score: number;
+  stability_days: number;
   repetitions: number;
   lapses: number;
   last_reviewed_at: string | null;
   next_review_at: string | null;
-  sync_dirty: number; // 1 = modified locally, 0 = synced
+  sync_dirty: number;
   updated_at: string;
 }
 
@@ -120,10 +120,10 @@ export interface SyncStatus {
   lastError: string | null;
 }
 
-// Global singleton instances
 let dbInstance: AppDatabase | null = null;
 let initPromise: Promise<AppDatabase> | null = null;
 let tursoClient: LibsqlClient | null = null;
+let remoteSchemaInitialized = false;
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let syncInFlight: Promise<boolean> | null = null;
 
@@ -146,7 +146,6 @@ function getTursoClient(): LibsqlClient | null {
     return null;
   }
 
-  // @libsql/client/web expects https:// instead of libsql://
   const httpUrl = rawUrl.replace(/^libsql:\/\//i, "https://");
 
   tursoClient = createClient({
@@ -166,21 +165,94 @@ function scheduleBackgroundSync(delayMs = 2000) {
   if (!getTursoClient()) return;
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
-    syncWithTurso().catch((err) => {
+    syncWithTurso(false).catch((err) => {
       console.warn("[Turso Sync] Background sync skipped:", err);
     });
   }, delayMs);
 }
 
+async function ensureRemoteSchema(remote: LibsqlClient): Promise<void> {
+  if (remoteSchemaInitialized) return;
+
+  await remote.batch(
+    [
+      `CREATE TABLE IF NOT EXISTS user_profiles (
+        id TEXT PRIMARY KEY,
+        current_jlpt TEXT NOT NULL DEFAULT 'N5',
+        target_jlpt TEXT NOT NULL DEFAULT 'N2',
+        target_industries TEXT NOT NULL DEFAULT '["it"]',
+        industry_blend_ratio REAL NOT NULL DEFAULT 0.70,
+        daily_goal INTEGER NOT NULL DEFAULT 15,
+        updated_at TEXT NOT NULL
+      );`,
+      `CREATE TABLE IF NOT EXISTS user_verb_progress (
+        user_id TEXT NOT NULL,
+        verb_id INTEGER NOT NULL,
+        reading_score REAL NOT NULL DEFAULT 0.0,
+        meaning_score REAL NOT NULL DEFAULT 0.0,
+        stability_days REAL NOT NULL DEFAULT 1.0,
+        repetitions INTEGER NOT NULL DEFAULT 0,
+        lapses INTEGER NOT NULL DEFAULT 0,
+        last_reviewed_at TEXT,
+        next_review_at TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, verb_id)
+      );`,
+      `CREATE TABLE IF NOT EXISTS quiz_history (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        verb_id INTEGER NOT NULL,
+        kanji_form TEXT NOT NULL,
+        furigana_reading TEXT NOT NULL,
+        correct_meaning TEXT NOT NULL,
+        jlpt_level TEXT NOT NULL,
+        quiz_mode TEXT NOT NULL,
+        is_correct INTEGER NOT NULL,
+        is_idk INTEGER NOT NULL DEFAULT 0,
+        is_not_sure INTEGER NOT NULL DEFAULT 0,
+        selected_label TEXT NOT NULL,
+        selected_kanji TEXT NOT NULL,
+        selected_furigana TEXT NOT NULL,
+        selected_meaning TEXT NOT NULL,
+        correct_label TEXT NOT NULL,
+        answered_at TEXT NOT NULL
+      );`,
+      `CREATE TABLE IF NOT EXISTS user_study_logs (
+        user_id TEXT NOT NULL,
+        id TEXT NOT NULL,
+        item_type TEXT NOT NULL,
+        item_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        reading TEXT NOT NULL,
+        meaning TEXT NOT NULL,
+        jlpt_level TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'manual',
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        logged_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, id)
+      );`,
+    ],
+    "write"
+  );
+
+  remoteSchemaInitialized = true;
+}
+
 /**
- * Bidirectional sync between local SQLite and Turso Cloud:
- * 1. Pushes local user_profiles, dirty user_verb_progress, quiz_history, and user_study_logs.
- * 2. Pulls remote updates from other devices and merges newer timestamps into local SQLite.
+ * Bidirectional sync between local SQLite and Turso Cloud.
+ * Pass forceFull = true to push ALL local progress and pull ALL remote rows regardless of lastSyncedAt.
  */
-export async function syncWithTurso(): Promise<boolean> {
+export async function syncWithTurso(forceFull = false): Promise<boolean> {
   const remote = getTursoClient();
-  if (!remote) return false;
-  if (typeof navigator !== "undefined" && navigator.onLine === false) return false;
+  if (!remote) {
+    syncStatus.lastError = "Turso URL or Token missing in build";
+    return false;
+  }
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    syncStatus.lastError = "Device is offline";
+    return false;
+  }
   if (syncInFlight) return syncInFlight;
 
   syncInFlight = (async () => {
@@ -190,7 +262,9 @@ export async function syncWithTurso(): Promise<boolean> {
     try {
       const local = await getDatabase();
 
-      // Ensure local quiz_history exists before syncing it
+      // Guarantee remote tables exist on Turso before querying
+      await ensureRemoteSchema(remote);
+
       await local.execute(`
         CREATE TABLE IF NOT EXISTS quiz_history (
           id TEXT PRIMARY KEY,
@@ -212,7 +286,6 @@ export async function syncWithTurso(): Promise<boolean> {
         );
       `);
 
-      // Ensure local user_study_logs exists before syncing it
       await local.execute(`
         CREATE TABLE IF NOT EXISTS user_study_logs (
           id TEXT PRIMARY KEY,
@@ -230,7 +303,7 @@ export async function syncWithTurso(): Promise<boolean> {
         );
       `);
 
-      // 1. Sync User Profile (Last-Write-Wins via updated_at)
+      // 1. Sync User Profile
       const localProfiles = await local.select<any[]>(
         "SELECT * FROM user_profiles LIMIT 1;"
       );
@@ -245,7 +318,16 @@ export async function syncWithTurso(): Promise<boolean> {
       });
       const remoteProfRow = remoteProfRes.rows?.[0] as any;
 
-      if (!remoteProfRow || String(localProf.updated_at) > String(remoteProfRow.updated_at || "")) {
+      const localHasActivity = await local.select<any[]>(
+        "SELECT COUNT(*) as cnt FROM user_verb_progress WHERE repetitions > 0;"
+      );
+      const hasLocalProgress = (localHasActivity[0]?.cnt || 0) > 0;
+
+      if (
+        !remoteProfRow ||
+        String(localProf.updated_at) > String(remoteProfRow.updated_at || "") ||
+        (hasLocalProgress && remoteProfRow.target_jlpt === "N2" && localProf.target_jlpt !== "N2")
+      ) {
         await remote.execute({
           sql: `INSERT INTO user_profiles (
                   id, current_jlpt, target_jlpt, daily_goal, target_industries, updated_at
@@ -286,58 +368,70 @@ export async function syncWithTurso(): Promise<boolean> {
         );
       }
 
-      // 2. Push dirty local verb progress rows to Turso
-      const dirtyRows = await local.select<VerbProgress[]>(
-        "SELECT * FROM user_verb_progress WHERE sync_dirty = 1;"
-      );
+      // 2. Push local verb progress rows to Turso (all rows if forceFull, else dirty rows)
+      const rowsToPush = forceFull
+        ? await local.select<VerbProgress[]>(
+            "SELECT * FROM user_verb_progress WHERE repetitions > 0 OR sync_dirty = 1;"
+          )
+        : await local.select<VerbProgress[]>(
+            "SELECT * FROM user_verb_progress WHERE sync_dirty = 1;"
+          );
 
-      if (dirtyRows.length > 0) {
-        const stmts = dirtyRows.map((row) => ({
-          sql: `INSERT INTO user_verb_progress (
-                  user_id, verb_id, reading_score, meaning_score, stability_days,
-                  repetitions, lapses, last_reviewed_at, next_review_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(user_id, verb_id) DO UPDATE SET
-                  reading_score = excluded.reading_score,
-                  meaning_score = excluded.meaning_score,
-                  stability_days = excluded.stability_days,
-                  repetitions = excluded.repetitions,
-                  lapses = excluded.lapses,
-                  last_reviewed_at = excluded.last_reviewed_at,
-                  next_review_at = excluded.next_review_at,
-                  updated_at = excluded.updated_at
-                WHERE excluded.updated_at >= user_verb_progress.updated_at;`,
-          args: [
-            userId,
-            row.verb_id,
-            row.reading_score,
-            row.meaning_score,
-            row.stability_days,
-            row.repetitions,
-            row.lapses,
-            row.last_reviewed_at,
-            row.next_review_at,
-            row.updated_at,
-          ],
-        }));
+      if (rowsToPush.length > 0) {
+        const CHUNK = 50;
+        for (let i = 0; i < rowsToPush.length; i += CHUNK) {
+          const slice = rowsToPush.slice(i, i + CHUNK);
+          const stmts = slice.map((row) => ({
+            sql: `INSERT INTO user_verb_progress (
+                    user_id, verb_id, reading_score, meaning_score, stability_days,
+                    repetitions, lapses, last_reviewed_at, next_review_at, updated_at
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(user_id, verb_id) DO UPDATE SET
+                    reading_score = excluded.reading_score,
+                    meaning_score = excluded.meaning_score,
+                    stability_days = excluded.stability_days,
+                    repetitions = excluded.repetitions,
+                    lapses = excluded.lapses,
+                    last_reviewed_at = excluded.last_reviewed_at,
+                    next_review_at = excluded.next_review_at,
+                    updated_at = excluded.updated_at
+                  WHERE excluded.updated_at >= user_verb_progress.updated_at;`,
+            args: [
+              userId,
+              row.verb_id,
+              row.reading_score,
+              row.meaning_score,
+              row.stability_days,
+              row.repetitions,
+              row.lapses,
+              row.last_reviewed_at,
+              row.next_review_at,
+              row.updated_at,
+            ],
+          }));
 
-        await remote.batch(stmts, "write");
+          await remote.batch(stmts, "write");
 
-        const syncedIds = dirtyRows.map((r) => r.verb_id);
-        const placeholders = syncedIds.map(() => "?").join(", ");
-        await local.execute(
-          `UPDATE user_verb_progress SET sync_dirty = 0 WHERE verb_id IN (${placeholders});`,
-          syncedIds
-        );
+          const syncedIds = slice.map((r) => r.verb_id);
+          const placeholders = syncedIds.map(() => "?").join(", ");
+          await local.execute(
+            `UPDATE user_verb_progress SET sync_dirty = 0 WHERE verb_id IN (${placeholders});`,
+            syncedIds
+          );
+        }
       }
 
-      // 3. Pull newer verb progress rows from Turso (written by your other devices)
-      const lastSynced = syncStatus.lastSyncedAt || "1970-01-01T00:00:00.000Z";
+      // 3. Pull newer verb progress rows from Turso
+      const sinceTimestamp =
+        forceFull || !syncStatus.lastSyncedAt
+          ? "1970-01-01T00:00:00.000Z"
+          : syncStatus.lastSyncedAt;
+
       const remoteProgressRes = await remote.execute({
         sql: `SELECT * FROM user_verb_progress
               WHERE user_id = ? AND updated_at > ?
               ORDER BY updated_at ASC;`,
-        args: [userId, lastSynced],
+        args: [userId, sinceTimestamp],
       });
 
       for (const r of (remoteProgressRes.rows || []) as any[]) {
@@ -380,9 +474,11 @@ export async function syncWithTurso(): Promise<boolean> {
         }
       }
 
-      // 4. Push recent local quiz_history entries & pull missing remote ones
+      // 4. Push & pull quiz_history
       const recentLocalHistory = await local.select<any[]>(
-        "SELECT * FROM quiz_history ORDER BY answered_at DESC LIMIT 100;"
+        forceFull
+          ? "SELECT * FROM quiz_history ORDER BY answered_at DESC LIMIT 500;"
+          : "SELECT * FROM quiz_history ORDER BY answered_at DESC LIMIT 100;"
       );
       if (recentLocalHistory.length > 0) {
         const historyStmts = recentLocalHistory.map((h) => ({
@@ -418,8 +514,8 @@ export async function syncWithTurso(): Promise<boolean> {
       const remoteHistoryRes = await remote.execute({
         sql: `SELECT * FROM quiz_history
               WHERE user_id = ? AND answered_at > ?
-              ORDER BY answered_at DESC LIMIT 150;`,
-        args: [userId, lastSynced],
+              ORDER BY answered_at DESC LIMIT 300;`,
+        args: [userId, sinceTimestamp],
       });
 
       for (const h of (remoteHistoryRes.rows || []) as any[]) {
@@ -451,13 +547,13 @@ export async function syncWithTurso(): Promise<boolean> {
         );
       }
 
-      // 5. Bidirectional Sync for user_study_logs (Logged Kanji, Vocab, Grammar, & Auto-Mastered)
-      const dirtyLogs = await local.select<any[]>(
-        "SELECT * FROM user_study_logs WHERE sync_dirty = 1;"
-      );
+      // 5. Bidirectional Sync for user_study_logs
+      const logsToPush = forceFull
+        ? await local.select<any[]>("SELECT * FROM user_study_logs;")
+        : await local.select<any[]>("SELECT * FROM user_study_logs WHERE sync_dirty = 1;");
 
-      if (dirtyLogs.length > 0) {
-        const logStmts = dirtyLogs.map((log) => ({
+      if (logsToPush.length > 0) {
+        const logStmts = logsToPush.map((log) => ({
           sql: `INSERT INTO user_study_logs (
                   user_id, id, item_type, item_key, title, reading, meaning,
                   jlpt_level, source, is_deleted, logged_at, updated_at
@@ -489,7 +585,7 @@ export async function syncWithTurso(): Promise<boolean> {
 
         await remote.batch(logStmts, "write");
 
-        const syncedLogIds = dirtyLogs.map((l) => l.id);
+        const syncedLogIds = logsToPush.map((l) => l.id);
         const logPlaceholders = syncedLogIds.map(() => "?").join(", ");
         await local.execute(
           `UPDATE user_study_logs SET sync_dirty = 0 WHERE id IN (${logPlaceholders});`,
@@ -501,10 +597,9 @@ export async function syncWithTurso(): Promise<boolean> {
         sql: `SELECT * FROM user_study_logs
               WHERE user_id = ? AND updated_at > ?
               ORDER BY updated_at ASC;`,
-        args: [userId, lastSynced],
+        args: [userId, sinceTimestamp],
       });
 
-      let pulledAnyLogs = false;
       for (const rl of (remoteLogsRes.rows || []) as any[]) {
         const logId = String(rl.id);
         const localLogMatch = await local.select<any[]>(
@@ -543,12 +638,7 @@ export async function syncWithTurso(): Promise<boolean> {
               remoteLogUpdated,
             ]
           );
-          pulledAnyLogs = true;
         }
-      }
-
-      if (pulledAnyLogs && typeof window !== "undefined") {
-        window.dispatchEvent(new Event("study-logs-updated"));
       }
 
       const nowIso = new Date().toISOString();
@@ -557,6 +647,13 @@ export async function syncWithTurso(): Promise<boolean> {
         localStorage.setItem("turso_last_synced_at", nowIso);
       }
 
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("study-logs-updated"));
+        window.dispatchEvent(new Event("daily-streak-updated"));
+        window.dispatchEvent(new Event("turso-sync-completed"));
+      }
+
+      console.log("[Turso Sync] Synced successfully at", nowIso);
       return true;
     } catch (err: any) {
       syncStatus.lastError = err?.message || "Sync failed";
@@ -571,7 +668,6 @@ export async function syncWithTurso(): Promise<boolean> {
   return syncInFlight;
 }
 
-// IndexedDB Helper for browser WASM persistence
 const IDB_NAME = "jlpt_verbs_browser_db";
 const IDB_STORE = "sqlite_file_store";
 const IDB_KEY = "database_sqlite_bin";
@@ -738,8 +834,11 @@ export async function getDatabase(): Promise<AppDatabase> {
     dbInstance = db;
     console.log("[DB] Initialization complete.");
 
-    // Trigger an initial non-blocking sync on startup
-    scheduleBackgroundSync(500);
+    // Trigger an initial full sync on startup so missing history is pulled/pushed
+    setTimeout(() => {
+      syncWithTurso(true).catch(() => {});
+    }, 400);
+
     return db;
   })();
 
@@ -753,7 +852,7 @@ export async function getDatabase(): Promise<AppDatabase> {
 
 async function seedCorpusInBatches(db: AppDatabase): Promise<void> {
   const verbs = seedVerbs as any[];
-  const BATCH_SIZE = 90; // 90 rows * 11 cols = 990 bind parameters per query
+  const BATCH_SIZE = 90;
 
   for (let i = 0; i < verbs.length; i += BATCH_SIZE) {
     const chunk = verbs.slice(i, i + BATCH_SIZE);
@@ -789,7 +888,6 @@ async function seedCorpusInBatches(db: AppDatabase): Promise<void> {
 }
 
 async function initializeSchema(db: AppDatabase): Promise<void> {
-  // 1. Verbs & Vocabulary Table
   await db.execute(`
     CREATE TABLE IF NOT EXISTS verbs (
       id INTEGER PRIMARY KEY,
@@ -806,14 +904,12 @@ async function initializeSchema(db: AppDatabase): Promise<void> {
     );
   `);
 
-  // Non-destructive column migration for existing local SQLite databases
   try {
     await db.execute(`ALTER TABLE verbs ADD COLUMN category TEXT NOT NULL DEFAULT 'verb';`);
   } catch {
     // Column already exists
   }
 
-  // 2. User Profiles Table
   await db.execute(`
     CREATE TABLE IF NOT EXISTS user_profiles (
       id TEXT PRIMARY KEY,
@@ -826,7 +922,6 @@ async function initializeSchema(db: AppDatabase): Promise<void> {
     );
   `);
 
-  // 3. User Verb Progress Table (Dual-Axis FSRS)
   await db.execute(`
     CREATE TABLE IF NOT EXISTS user_verb_progress (
       verb_id INTEGER PRIMARY KEY,
@@ -842,7 +937,6 @@ async function initializeSchema(db: AppDatabase): Promise<void> {
     );
   `);
 
-  // 4. User Study Logs Table (Manual + Auto-Mastered Kanji, Vocab, Verbs, Grammar)
   await db.execute(`
     CREATE TABLE IF NOT EXISTS user_study_logs (
       id TEXT PRIMARY KEY,
@@ -860,7 +954,6 @@ async function initializeSchema(db: AppDatabase): Promise<void> {
     );
   `);
 
-  // Seed or top up verbs table if fewer rows exist than in seed_verbs.json
   const existingVerbs = await db.select<any[]>("SELECT COUNT(*) as count FROM verbs;");
   const count = existingVerbs[0]?.count || 0;
 
@@ -869,7 +962,6 @@ async function initializeSchema(db: AppDatabase): Promise<void> {
     await seedCorpusInBatches(db);
   }
 
-  // Backfill category column on existing rows if any non-verb items are still tagged 'verb'
   const nonVerbItems = (seedVerbs as any[]).filter((v) => v.category && v.category !== "verb");
   if (nonVerbItems.length > 0) {
     const sampleCheck = await db.select<any[]>(
@@ -894,7 +986,6 @@ async function initializeSchema(db: AppDatabase): Promise<void> {
     }
   }
 
-  // Ensure default profile exists
   const existingProfile = await db.select<any[]>(
     "SELECT * FROM user_profiles WHERE id = 'guest_user';"
   );

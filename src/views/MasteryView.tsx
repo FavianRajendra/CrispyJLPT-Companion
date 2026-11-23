@@ -10,6 +10,8 @@ import {
   Trophy,
   BookOpen,
   Layers,
+  Cloud,
+  RefreshCw,
 } from "lucide-react";
 import {
   Verb,
@@ -18,6 +20,9 @@ import {
   JlptLevel,
   IndustryTrack,
   getDatabase,
+  syncWithTurso,
+  getSyncStatus,
+  SyncStatus,
 } from "../lib/db";
 import { getAllStudyLogs, StudyLogEntry } from "../lib/studyLogs";
 import seedKanji from "../data/seed_kanji.json";
@@ -200,6 +205,7 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
   const [checkins, setCheckins] = useState<DailyCheckinRow[]>([]);
   const [studyLogs, setStudyLogs] = useState<StudyLogEntry[]>([]);
   const [trophyFilter, setTrophyFilter] = useState<"mastered" | "logged">("mastered");
+  const [cloudSyncState, setCloudSyncState] = useState<SyncStatus>(() => getSyncStatus());
   const [quizStats, setQuizStats] = useState<{
     totalAnswered: number;
     correctCount: number;
@@ -213,6 +219,22 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
   });
 
   const todayKey = formatDateKey(new Date());
+
+  const refreshCloudSyncStatus = useCallback(() => {
+    setCloudSyncState(getSyncStatus());
+  }, []);
+
+  useEffect(() => {
+    refreshCloudSyncStatus();
+    window.addEventListener("turso-sync-completed", refreshCloudSyncStatus);
+    return () => window.removeEventListener("turso-sync-completed", refreshCloudSyncStatus);
+  }, [refreshCloudSyncStatus]);
+
+  const handleForceCloudSync = async () => {
+    setCloudSyncState((prev) => ({ ...prev, isSyncing: true, lastError: null }));
+    await syncWithTurso(true);
+    setCloudSyncState(getSyncStatus());
+  };
 
   const loadStudyLogs = useCallback(async () => {
     try {
@@ -451,7 +473,6 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
       }
     }
 
-    // Ensure manually logged kanji from Kanji Lab also appear in the accumulator
     for (const ch of manuallyLoggedKanjiSet) {
       if (!kanjiAccumulator.has(ch)) {
         kanjiAccumulator.set(ch, { totalScore: 0, count: 1, maxScore: 0 });
@@ -630,6 +651,64 @@ export const MasteryView: React.FC<MasteryViewProps> = ({
 
   return (
     <div className="max-w-5xl mx-auto space-y-5 pb-24 md:pb-10">
+      {/* 0. Turso Cloud Sync Status & Manual Full Sync Bar */}
+      <div className="p-4 rounded-3xl glass-card border border-border-glass flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div
+            className={`w-10 h-10 rounded-2xl flex items-center justify-center border ${
+              cloudSyncState.lastError
+                ? "bg-rose-500/15 border-rose-500/40 text-rose-300"
+                : cloudSyncState.configured
+                ? "bg-sky-500/15 border-sky-400/40 text-sky-300"
+                : "bg-amber-500/15 border-amber-400/40 text-amber-300"
+            }`}
+          >
+            <Cloud className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-xs sm:text-sm font-bold text-primary flex items-center gap-2">
+              <span>Turso Cloud Sync</span>
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  cloudSyncState.lastError
+                    ? "bg-rose-500/20 text-rose-300"
+                    : cloudSyncState.configured
+                    ? "bg-emerald-500/20 text-emerald-300"
+                    : "bg-amber-500/20 text-amber-300"
+                }`}
+              >
+                {cloudSyncState.lastError
+                  ? "Sync Error"
+                  : cloudSyncState.configured
+                  ? "Connected"
+                  : "Offline / No Keys"}
+              </span>
+            </div>
+            <p className="text-[11px] text-primary-muted">
+              {cloudSyncState.lastError
+                ? `Error: ${cloudSyncState.lastError}`
+                : cloudSyncState.lastSyncedAt
+                ? `Last synced: ${new Date(cloudSyncState.lastSyncedAt).toLocaleString()}`
+                : "Waiting for first sync..."}
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          disabled={cloudSyncState.isSyncing}
+          onClick={handleForceCloudSync}
+          className="min-h-[40px] px-4 py-2 rounded-2xl bg-sky-500/20 border border-sky-400/40 text-sky-300 hover:bg-sky-500/30 disabled:opacity-50 text-xs font-bold flex items-center gap-2 transition-all"
+        >
+          <RefreshCw
+            className={`w-3.5 h-3.5 ${cloudSyncState.isSyncing ? "animate-spin" : ""}`}
+          />
+          <span>
+            {cloudSyncState.isSyncing ? "Syncing..." : "Sync Now (Push & Pull)"}
+          </span>
+        </button>
+      </div>
+
       {/* 1. Daily Fish Streak Banner */}
       <div className="p-5 sm:p-6 rounded-3xl glass-card border border-accent/30 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4">

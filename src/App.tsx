@@ -60,6 +60,8 @@ export function App() {
 
   useEffect(() => {
     loadAppState();
+    window.addEventListener("turso-sync-completed", loadAppState);
+    return () => window.removeEventListener("turso-sync-completed", loadAppState);
   }, [loadAppState]);
 
   // Update a single verb's progress in-place without reloading the entire app/DB
