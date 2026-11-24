@@ -14,11 +14,13 @@ permissions:
 
 jobs:
   build-android:
-    name: Build Android APK (CrispyJLPT-Companion)
+    name: >-
+      ${{ startsWith(github.ref, 'refs/tags/v') && 'Build Public Offline Android APK' || 'Build Personal Cloud Android APK' }}
     runs-on: ubuntu-latest
+    # Inject Turso credentials ONLY on personal branch builds (never on public v* release tags)
     env:
-      VITE_TURSO_DATABASE_URL: ${{ secrets.VITE_TURSO_DATABASE_URL }}
-      VITE_TURSO_AUTH_TOKEN: ${{ secrets.VITE_TURSO_AUTH_TOKEN }}
+      VITE_TURSO_DATABASE_URL: ${{ !startsWith(github.ref, 'refs/tags/v') && secrets.VITE_TURSO_DATABASE_URL || '' }}
+      VITE_TURSO_AUTH_TOKEN: ${{ !startsWith(github.ref, 'refs/tags/v') && secrets.VITE_TURSO_AUTH_TOKEN || '' }}
 
     steps:
       - name: Checkout repository
@@ -75,15 +77,17 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Verify Turso Secrets & Build Web Bundle
+      - name: Build Web Bundle & Enforce Offline Safety Gate
         run: |
-          if [ -z "$VITE_TURSO_DATABASE_URL" ] || [ -z "$VITE_TURSO_AUTH_TOKEN" ]; then
-            echo "WARNING: Turso secrets are empty in this workflow run!"
-          else
-            echo "Turso URL configured: ${VITE_TURSO_DATABASE_URL:0:28}..."
-          fi
           npm ci
           npm run build
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            if grep -rn "turso\.io" dist/; then
+              echo "SECURITY ERROR: Turso URL leaked into public release bundle!"
+              exit 1
+            fi
+            echo "Verified: Public offline web bundle contains zero Turso credentials."
+          fi
 
       - name: Initialize & Build Signed Android APK (ARM64)
         run: |
@@ -92,14 +96,15 @@ jobs:
           fi
           npx tauri android build --debug --apk --target aarch64
 
-      - name: Upload APK Workflow Artifact
+      - name: Upload Personal Cloud APK Artifact (Private Branch Only)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
         uses: actions/upload-artifact@v4
         with:
-          name: CrispyJLPT-Companion-Android-APK
+          name: CrispyJLPT-Companion-Personal-Android-APK
           path: src-tauri/gen/android/app/build/outputs/apk/universal/debug/*.apk
           if-no-files-found: error
 
-      - name: Attach APK to GitHub Release (On Version Tags v*)
+      - name: Attach Offline APK to Public GitHub Release (On Version Tags v*)
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -108,11 +113,13 @@ jobs:
           files: src-tauri/gen/android/app/build/outputs/apk/universal/debug/*.apk
 
   build-desktop:
-    name: Build Desktop (${{ matrix.platform }})
+    name: >-
+      ${{ startsWith(github.ref, 'refs/tags/v') && format('Build Public Offline Desktop ({0})', matrix.platform) || format('Build Personal Cloud Desktop ({0})', matrix.platform) }}
     runs-on: ${{ matrix.os }}
+    # Inject Turso credentials ONLY on personal branch builds (never on public v* release tags)
     env:
-      VITE_TURSO_DATABASE_URL: ${{ secrets.VITE_TURSO_DATABASE_URL }}
-      VITE_TURSO_AUTH_TOKEN: ${{ secrets.VITE_TURSO_AUTH_TOKEN }}
+      VITE_TURSO_DATABASE_URL: ${{ !startsWith(github.ref, 'refs/tags/v') && secrets.VITE_TURSO_DATABASE_URL || '' }}
+      VITE_TURSO_AUTH_TOKEN: ${{ !startsWith(github.ref, 'refs/tags/v') && secrets.VITE_TURSO_AUTH_TOKEN || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -145,7 +152,7 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      - name: Build Desktop App (Artifacts on Push)
+      - name: Build Personal Desktop App (Private Artifacts on Push)
         if: "!startsWith(github.ref, 'refs/tags/v')"
         uses: tauri-apps/tauri-action@v0
         env:
@@ -153,25 +160,25 @@ jobs:
         with:
           args: ${{ matrix.platform == 'macos' && '--target universal-apple-darwin' || '' }}
 
-      - name: Upload Desktop Installers as Artifact
+      - name: Upload Personal Desktop Installers as Artifact
         if: "!startsWith(github.ref, 'refs/tags/v')"
         uses: actions/upload-artifact@v4
         with:
-          name: CrispyJLPT-Companion-${{ matrix.platform }}
+          name: CrispyJLPT-Companion-Personal-${{ matrix.platform }}
           path: |
             src-tauri/target/**/release/bundle/dmg/*.dmg
             src-tauri/target/**/release/bundle/msi/*.msi
             src-tauri/target/**/release/bundle/nsis/*.exe
 
-      - name: Build & Publish Desktop Release (On Version Tags v*)
+      - name: Build & Publish Public Offline Desktop Release (On Version Tags v*)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'CrispyJLPT-Companion ${{ github.ref_name }}'
-          releaseBody: 'Cross-platform production release for macOS, Windows, and Android.'
+          releaseName: 'CrispyJLPT-Companion ${{ github.ref_name }} (Offline Edition)'
+          releaseBody: 'Offline-first cross-platform release for macOS, Windows, and Android. All progress and kanji notes are stored locally on your device.'
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.platform == 'macos' && '--target universal-apple-darwin' || '' }}

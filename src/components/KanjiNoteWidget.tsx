@@ -13,7 +13,7 @@ import {
   Type,
   ArrowRight,
 } from "lucide-react";
-import { getDatabase, syncWithTurso } from "../lib/db";
+import { getDatabase, getSyncStatus, syncWithTurso } from "../lib/db";
 import { speakJapanese } from "../lib/audio";
 import seedVerbs from "../data/seed_verbs.json";
 
@@ -380,6 +380,8 @@ export const KanjiNoteWidget: React.FC = () => {
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
 
+  const isCloudSyncEnabled = useMemo(() => getSyncStatus().configured, []);
+
   // 1. Ensure SQLite table exists & load saved kanji notes
   const ensureTableAndLoad = useCallback(async () => {
     const db = await getDatabase();
@@ -404,8 +406,9 @@ export const KanjiNoteWidget: React.FC = () => {
     setNotes(rows || []);
   }, []);
 
-  // Bidirectional sync directly with Turso Cloud
+  // Bidirectional sync directly with Turso Cloud (no-op in offline builds)
   const handleSyncKanjiNotes = useCallback(async () => {
+    if (!isCloudSyncEnabled) return;
     try {
       setIsSyncing(true);
       await syncWithTurso(true);
@@ -415,7 +418,7 @@ export const KanjiNoteWidget: React.FC = () => {
     } finally {
       setIsSyncing(false);
     }
-  }, [ensureTableAndLoad]);
+  }, [ensureTableAndLoad, isCloudSyncEnabled]);
 
   useEffect(() => {
     ensureTableAndLoad();
@@ -765,8 +768,9 @@ export const KanjiNoteWidget: React.FC = () => {
     setRemoteCandidates([]);
     setTimeout(() => setSaveFeedback(null), 2500);
 
-    // Push immediately to Turso Cloud
-    syncWithTurso(false).catch(() => {});
+    if (isCloudSyncEnabled) {
+      syncWithTurso(false).catch(() => {});
+    }
   };
 
   const handleDeleteNote = async (id: string) => {
@@ -778,7 +782,9 @@ export const KanjiNoteWidget: React.FC = () => {
     );
     await ensureTableAndLoad();
     window.dispatchEvent(new Event("kanji-notes-updated"));
-    syncWithTurso(false).catch(() => {});
+    if (isCloudSyncEnabled) {
+      syncWithTurso(false).catch(() => {});
+    }
   };
 
   const filteredNotes = useMemo(() => {
@@ -833,15 +839,17 @@ export const KanjiNoteWidget: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={handleSyncKanjiNotes}
-                  title="Sync notes with Turso cloud"
-                  aria-label="Sync kanji notes"
-                  className="p-2 rounded-xl text-primary-muted hover:text-primary hover:bg-surface-hover transition-colors"
-                >
-                  <RefreshCw className={`w-4 h-4 ${isSyncing ? "animate-spin text-accent" : ""}`} />
-                </button>
+                {isCloudSyncEnabled && (
+                  <button
+                    type="button"
+                    onClick={handleSyncKanjiNotes}
+                    title="Sync notes with Turso cloud"
+                    aria-label="Sync kanji notes"
+                    className="p-2 rounded-xl text-primary-muted hover:text-primary hover:bg-surface-hover transition-colors"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isSyncing ? "animate-spin text-accent" : ""}`} />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setIsOpen(false)}
