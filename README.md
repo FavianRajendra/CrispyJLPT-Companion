@@ -1,79 +1,58 @@
 # CrispyJLPT Companion
 
-> Cross-Platform Offline-First Japanese Verb Kanji Learning Studio targeting **Android (`.apk`)**, **macOS (`.dmg`)**, and **Windows (`.msi`/`.exe`)** from a single codebase.
-
-Built with **Tauri v2**, **React 19**, **TypeScript**, **Tailwind CSS**, **Framer Motion**, **SQLite (Dual-Driver Native / WebAssembly)**, and **Neon Serverless PostgreSQL**.
+> Offline-first Japanese verb & kanji learning studio for **Android** and **macOS**. Study JLPT (`N5`–`N1`) and industry-specific vocabulary with dual-axis spaced repetition—100% locally on your device, with zero account or internet required.
 
 ---
 
-## Key Highlights & Architecture
+## Download (Offline Edition)
 
-### 1. Dual-Driver Database Layer (`src/lib/db.ts`)
-- **Native Tauri (Desktop & Mobile):** Runs `@tauri-apps/plugin-sql` interfacing with native SQLite (`jlpt_verbs.db`) with zero overhead and full offline operation.
-- **Web Browser Fallback:** Seamlessly switches to `sql.js` (WASM SQLite) persisted in IndexedDB, allowing 100% feature-complete testing and preview inside any modern browser without needing to recompile native binaries.
+Grab the latest installer directly from the **[Releases](https://github.com/FavianRajendra/CrispyJLPT-Companion/releases/latest)** page:
 
-### 2. Dual-Axis FSRS Mastery & Priority Scheduler (`src/lib/mastery.ts`)
-- Evaluates **Reading Mastery** and **Meaning Mastery** separately on independent axes (0.0 to 1.0).
-- Applies exponential memory decay:
-  $$R(t) = e^{-t / S}$$
-  where $S$ is memory stability in days and $t$ is elapsed time since last review.
-- Dynamic session priority queue:
-  $$P_v = (W_{\text{exam}} \cdot S_{\text{jlpt}}(v)) + (W_{\text{industry}} \cdot S_{\text{domain}}(v)) + (W_{\text{fsrs}} \cdot U_{\text{decay}}(v))$$
-  calibrated to balance core exam readiness (e.g. N2) with targeted career vocabulary (e.g. IT, Finance, Healthcare).
+| Platform | Installer | Status |
+| :--- | :--- | :--- |
+| **Android** | `.apk` (ARM64) | Available on [Releases](https://github.com/FavianRajendra/CrispyJLPT-Companion/releases/latest) |
+| **macOS** | `.dmg` (Universal Apple Silicon & Intel) | Available on [Releases](https://github.com/FavianRajendra/CrispyJLPT-Companion/releases/latest) |
+| **Windows** | `.msi` / `.exe` | Coming soon |
 
-### 3. Modern Glassmorphic Design System (`src/styles/tokens.css`)
-- **Three-Layer CSS Token Architecture:**
-  - Layer 1: Primitives (`--raw-zinc-950`, `--raw-indigo-500`, `--raw-emerald-500`, `--raw-amber-500`, `--raw-rose-500`)
-  - Layer 2: Semantics (`--bg-canvas`, `--surface-glass`, `--border-glass`, `--text-primary`, `--text-muted`)
-  - Layer 3: Components (`--card-radius: 1.5rem`, `--touch-target-min: 44px`, fixed vertical layout slots)
-- **Zero Cumulative Layout Shift (`CLS < 0.1`):** Fixed vertical height reservation for `<ruby>` Furigana and English definitions prevents visual jumping during card flips.
-- **Framer Motion Choreography:** Staggered eye-tracking reveal (`0.00s` Kanji pulse -> `0.08s` Ruby Furigana glide -> `0.18s` English meaning fade).
-
-### 4. Core Study Modes
-- **Present Mode:** Manual study with FSRS triage (Again, Hard, Easy) + Hands-Free Slideshow with customizable speed (`0.5x`–`2.0x`), loop toggle, native `ja-JP` speech synthesis, and SVG circular countdown ring.
-- **Quiz Mode:** 4 adaptive formats (Reading Test, Meaning Test, Reverse Recognition, and Dual-Track Weakness Exam).
-- **Directory Mode:** Searchable verb dictionary across all JLPT levels (`N5`–`N1`) and 6 career tracks (`IT`, `Finance`, `Food & Beverage`, `Healthcare`, `Manufacturing`, `General`).
-- **Mastery Mode:** Career goal calibration, dual progress meters (JLPT Exam Readiness % & Industry Readiness %), and FSRS memory distribution.
-
-### 5. Multi-Device Cloud Sync (`db/schema.sql`, `api/sync.ts`, `src/lib/sync.ts`)
-- Edge-compatible serverless handler powered by `@neondatabase/serverless` for Neon PostgreSQL.
-- Delta sync with timestamp conflict resolution and "Continue as Local Guest" automatic merge.
+*All progress, quiz history, and custom kanji notes are stored locally on your device using SQLite.*
 
 ---
 
-## Getting Started
+## Features
 
-### Prerequisites
-- Node.js >= 20
-- Rust & Cargo >= 1.78
-- Python 3.11+ (for corpus scraping)
+- **Present Mode:** Flashcard study with FSRS triage (`Again`, `Hard`, `Easy`), hands-free slideshow (`0.5x`–`2.0x`), furigana toggle, and native `ja-JP` audio pronunciation.
+- **Quiz Mode:** Adaptive drills across Reading, Meaning, Reverse Recognition, and Weakness Review.
+- **Daily Kanji & Furigana Notes (`+ Kanji`):** Quick-log vocabulary with automatic Romaji-to-Hiragana conversion and instant offline dictionary lookup.
+- **Directory & Mastery:** Filterable corpus across JLPT `N5`–`N1` and 6 career tracks (`IT`, `Finance`, `F&B`, `Healthcare`, `Manufacturing`, `General`) with dual-axis reading/meaning mastery tracking.
 
-### Installation & Development
+---
+
+## Keyboard Shortcuts (Desktop)
+
+| Key | Action |
+| :--- | :--- |
+| `Space` | Reveal meaning / Advance quiz |
+| `←` / `→` | Previous / Next card |
+| `R` | Pronounce Japanese audio (`ja-JP`) |
+| `1` / `2` / `3` | FSRS rating (`Again` / `Hard` / `Easy`) |
+| `1` – `4` | Select quiz option |
+
+---
+
+## Run from Source (Optional)
+
+Requires **Node.js 20+** and **Rust 1.78+**:
+
 ```bash
-# Install dependencies
 npm install
-
-# Single-command native desktop app launch (macOS / Windows)
-npm run dev
-
-# Fast browser preview with WebAssembly SQLite fallback
-npm run dev:web
-
-# Production build
-npm run build
-npm run build:tauri
+npm run dev       # Launch native Tauri desktop app
+npm run dev:web   # Preview in browser (WASM SQLite)
 ```
 
-### Keyboard Shortcuts
-| Key | Action |
-| --- | --- |
-| `Space` | Reveal English Meaning / Advance Quiz |
-| `←` / `→` | Previous / Next Verb |
-| `R` | Pronounce Japanese Audio (ja-JP) |
-| `1` / `2` / `3` | FSRS Triage (Again / Hard / Easy) |
-| `1` – `4` | Select Quiz Option |
-
 ---
 
-## Cross-Platform Packaging & CI/CD
-Automated builds for **macOS (`.dmg`)**, **Windows (`.msi`)**, and **Android (`.apk`)** are configured via GitHub Actions in [build.yml](file:///.github/workflows/build.yml).
+## Author & Support
+
+Built by **[FavianRajendra](https://github.com/FavianRajendra)**. If CrispyJLPT Companion helps with your Japanese studies, you can support the project here:
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/favianrajed)
